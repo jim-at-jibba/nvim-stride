@@ -1,19 +1,19 @@
 -- main module file
-local module = require("plugin_name.module")
+local module = require("stride.module")
 
----@class Config
+---@class Stride.Config
 ---@field opt string Your config option
 local config = {
   opt = "Hello!",
 }
 
----@class MyModule
+---@class Stride
 local M = {}
 
----@type Config
+---@type Stride.Config
 M.config = config
 
----@param args Config?
+---@param args Stride.Config?
 -- you can define your setup function here. Usually configurations can be merged, accepting outside params and
 -- you can also put some validation here for those.
 M.setup = function(args)

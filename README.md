@@ -1,14 +1,39 @@
-# A Neovim Plugin Template
+# nvim-stride
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/ellisonleao/nvim-plugin-template/lint-test.yml?branch=main&style=for-the-badge)
 ![Lua](https://img.shields.io/badge/Made%20with%20Lua-blueviolet.svg?style=for-the-badge&logo=lua)
 
-A template repository for Neovim plugins.
+A Neovim plugin.
 
-## Using it
+## Installation
 
-Via `gh`:
+Using lazy.nvim:
 
+```lua
+{
+  "your-username/nvim-stride",
+  config = function()
+    require("stride").setup()
+  end,
+}
+```
+
+## Plugin structure
+
+```
+.
+├── lua
+│   ├── stride
+│   │   └── module.lua
+│   └── stride.lua
+├── Makefile
+├── plugin
+│   └── stride.lua
+├── README.md
+├── tests
+│   ├── minimal_init.lua
+│   └── stride
+│       └── stride_spec.lua
 ```
 $ gh repo create my-plugin -p ellisonleao/nvim-plugin-template
 ```
