@@ -1,1 +1,3 @@
-vim.api.nvim_create_user_command("Stride", require("stride").hello, {})
+-- Plugin file for stride.nvim
+-- The plugin is initialized via require("stride").setup()
+-- No commands needed for V1 - functionality is automatic
