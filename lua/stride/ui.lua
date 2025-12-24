@@ -4,12 +4,19 @@
 ---@field col number 0-indexed column where suggestion starts
 ---@field lines string[] Split lines of suggestion
 ---@field buf number Buffer handle
+---@field is_remote? boolean True if this is a remote (V2) suggestion
+---@field target_line? number 1-indexed target line for remote suggestions
+---@field original? string Original text to replace (remote only)
+---@field new? string Replacement text (remote only)
+---@field col_start? number 0-indexed column start (remote only)
+---@field col_end? number 0-indexed column end (remote only)
 
 local M = {}
 
 local Log = require("stride.log")
 
 local ns_id = vim.api.nvim_create_namespace("StrideGhost")
+local ns_id_remote = vim.api.nvim_create_namespace("StrideRemote")
 
 ---@type Stride.Suggestion|nil
 M.current_suggestion = nil
@@ -20,13 +27,33 @@ M.current_buf = nil
 ---@type number|nil
 M.extmark_id = nil
 
+---@type number|nil Highlight extmark for remote suggestions
+M.remote_hl_id = nil
+
+---@type number|nil Virtual text extmark for remote suggestions
+M.remote_virt_id = nil
+
 ---Clear current ghost text
 function M.clear()
+  -- Clear local suggestion extmark
   if M.extmark_id and M.current_buf then
     Log.debug("ui.clear: removing extmark %d", M.extmark_id)
     pcall(vim.api.nvim_buf_del_extmark, M.current_buf, ns_id, M.extmark_id)
   end
+
+  -- Clear remote suggestion extmarks
+  if M.remote_hl_id and M.current_buf then
+    Log.debug("ui.clear: removing remote highlight %d", M.remote_hl_id)
+    pcall(vim.api.nvim_buf_del_extmark, M.current_buf, ns_id_remote, M.remote_hl_id)
+  end
+  if M.remote_virt_id and M.current_buf then
+    Log.debug("ui.clear: removing remote virt_text %d", M.remote_virt_id)
+    pcall(vim.api.nvim_buf_del_extmark, M.current_buf, ns_id_remote, M.remote_virt_id)
+  end
+
   M.extmark_id = nil
+  M.remote_hl_id = nil
+  M.remote_virt_id = nil
   M.current_suggestion = nil
   M.current_buf = nil
 end
@@ -113,6 +140,85 @@ end
 ---@return number
 function M.get_ns_id()
   return ns_id
+end
+
+---Setup highlight groups for remote suggestions
+function M.setup_highlights()
+  -- StrideReplace: red foreground for text to be replaced
+  vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff6b6b", strikethrough = true })
+  -- StrideRemoteSuggestion: cyan for replacement text
+  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#4ecdc4", italic = true })
+  Log.debug("ui.setup_highlights: highlight groups defined")
+end
+
+---Render a remote suggestion (V2)
+---@param suggestion Stride.RemoteSuggestion
+---@param buf number Buffer handle
+function M.render_remote(suggestion, buf)
+  Log.debug("===== UI RENDER REMOTE =====")
+  Log.debug("line=%d original='%s' new='%s'", suggestion.line, suggestion.original, suggestion.new)
+
+  M.clear()
+
+  if not vim.api.nvim_buf_is_valid(buf) then
+    Log.debug("SKIP: buffer %d is invalid", buf)
+    return
+  end
+
+  local current_buf = vim.api.nvim_get_current_buf()
+  if current_buf ~= buf then
+    Log.debug("SKIP: buffer changed (request=%d current=%d)", buf, current_buf)
+    return
+  end
+
+  local row = suggestion.line - 1 -- Convert to 0-indexed
+
+  -- 1. Highlight the original text with StrideReplace
+  local ok_hl, hl_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_start, {
+    end_col = suggestion.col_end,
+    hl_group = "StrideReplace",
+  })
+  if ok_hl then
+    M.remote_hl_id = hl_id
+    Log.debug("remote highlight extmark=%d", hl_id)
+  else
+    Log.debug("ERROR: failed to set remote highlight: %s", tostring(hl_id))
+  end
+
+  -- 2. Add EOL virtual text showing the replacement
+  local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, 0, {
+    virt_text = { { " → " .. suggestion.new, "StrideRemoteSuggestion" } },
+    virt_text_pos = "eol",
+  })
+  if ok_virt then
+    M.remote_virt_id = virt_id
+    Log.debug("remote virt_text extmark=%d", virt_id)
+  else
+    Log.debug("ERROR: failed to set remote virt_text: %s", tostring(virt_id))
+  end
+
+  M.current_buf = buf
+  M.current_suggestion = {
+    text = suggestion.new,
+    row = row,
+    col = suggestion.col_start,
+    lines = { suggestion.new },
+    buf = buf,
+    is_remote = true,
+    target_line = suggestion.line,
+    original = suggestion.original,
+    new = suggestion.new,
+    col_start = suggestion.col_start,
+    col_end = suggestion.col_end,
+  }
+
+  Log.debug("SUCCESS: remote suggestion rendered for line %d", suggestion.line)
+end
+
+---Get remote namespace ID (for testing)
+---@return number
+function M.get_ns_id_remote()
+  return ns_id_remote
 end
 
 return M

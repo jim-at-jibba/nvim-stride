@@ -8,6 +8,8 @@
 ---@field use_treesitter? boolean Use Treesitter for smart context expansion
 ---@field disabled_filetypes? string[] Filetypes to disable predictions
 ---@field debug? boolean Enable debug logging output
+---@field mode? "completion"|"refactor"|"both" Operational mode (default: "completion")
+---@field show_remote? boolean Show remote suggestions in refactor mode (default: true)
 
 local M = {}
 
@@ -22,6 +24,8 @@ M.defaults = {
   use_treesitter = true,
   disabled_filetypes = {},
   debug = false,
+  mode = "completion",
+  show_remote = true,
 }
 
 ---@type Stride.Config
