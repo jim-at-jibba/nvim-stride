@@ -8,6 +8,8 @@
 
 local M = {}
 
+local Log = require("stride.log")
+
 ---@type uv_timer_t|nil
 M.timer = nil
 
@@ -24,13 +26,16 @@ end
 ---@param end_line number End line (0-indexed)
 ---@return number, number Expanded start_line, end_line
 local function _expand_context_via_treesitter(buf, start_line, end_line)
+  local orig_start, orig_end = start_line, end_line
   local ok, parser = pcall(vim.treesitter.get_parser, buf)
   if not ok or not parser then
+    Log.debug("treesitter: no parser available")
     return start_line, end_line
   end
 
   local trees = parser:parse()
   if not trees or not trees[1] then
+    Log.debug("treesitter: parse failed")
     return start_line, end_line
   end
   local root = trees[1]:root()
@@ -67,6 +72,10 @@ local function _expand_context_via_treesitter(buf, start_line, end_line)
       break
     end
     bottom_node = bottom_node:parent()
+  end
+
+  if start_line ~= orig_start or end_line ~= orig_end then
+    Log.debug("treesitter: expanded context %d-%d -> %d-%d", orig_start, orig_end, start_line, end_line)
   end
 
   return start_line, end_line
@@ -117,6 +126,8 @@ function M.get_context(base_context_lines)
   table.insert(prefix_lines, prefix_part)
   table.insert(suffix_lines, 1, suffix_part)
 
+  Log.debug("get_context: row=%d col=%d prefix=%d chars suffix=%d chars ft=%s", row, col, #table.concat(prefix_lines, "\n"), #table.concat(suffix_lines, "\n"), vim.bo[buf].filetype)
+
   return {
     prefix = table.concat(prefix_lines, "\n"),
     suffix = table.concat(suffix_lines, "\n"),
@@ -132,9 +143,11 @@ end
 ---@param callback function Function to call after delay
 function M.debounce(ms, callback)
   if M.timer then
+    Log.debug("debounce: cancelling previous timer")
     M.timer:stop()
     M.timer:close()
   end
+  Log.debug("debounce: scheduling callback in %dms", ms)
   M.timer = vim.loop.new_timer()
   M.timer:start(ms, 0, vim.schedule_wrap(callback))
 end

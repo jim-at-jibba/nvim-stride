@@ -98,6 +98,38 @@ require("stride").setup({
 3. Press `<Tab>` to accept the suggestion
 4. Press any other key to dismiss and continue typing
 
+### With blink.cmp
+
+If you use [blink.cmp](https://github.com/saghen/blink.cmp), configure Tab to check for stride suggestions first:
+
+```lua
+{
+  "saghen/blink.cmp",
+  opts = {
+    keymap = {
+      ["<Tab>"] = {
+        function(cmp)
+          local ok, ui = pcall(require, "stride.ui")
+          if ok and ui.current_suggestion then
+            return require("stride").accept()
+          end
+          return cmp.select_next()
+        end,
+        "fallback",
+      },
+    },
+  },
+}
+```
+
+Or use a different keymap for stride to avoid conflicts:
+
+```lua
+require("stride").setup({
+  accept_keymap = "<C-y>",  -- Use Ctrl+Y instead of Tab
+})
+```
+
 ## How It Works
 
 1. **Debounced Trigger**: After you stop typing for 300ms, a prediction is requested
