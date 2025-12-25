@@ -10,6 +10,9 @@
 ---@field debug? boolean Enable debug logging output
 ---@field mode? "completion"|"refactor"|"both" Operational mode (default: "completion")
 ---@field show_remote? boolean Show remote suggestions in refactor mode (default: true)
+---@field max_tracked_changes? number Max changes to track across buffers (default: 10)
+---@field token_budget? number Max tokens (~3 chars each) for change history in prompt (default: 1000)
+---@field small_file_threshold? number Send whole file if <= this many lines (default: 200)
 
 local M = {}
 
@@ -26,6 +29,9 @@ M.defaults = {
   debug = false,
   mode = "completion",
   show_remote = true,
+  max_tracked_changes = 10,
+  token_budget = 1000,
+  small_file_threshold = 200,
 }
 
 ---@type Stride.Config

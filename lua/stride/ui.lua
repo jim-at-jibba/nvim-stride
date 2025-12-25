@@ -33,6 +33,44 @@ M.remote_hl_id = nil
 ---@type number|nil Virtual text extmark for remote suggestions
 M.remote_virt_id = nil
 
+---@type boolean Whether Esc keymap is currently set
+M._esc_mapped = false
+
+---@type number|nil Buffer where Esc mapping was set
+M._esc_buf = nil
+
+---Setup Esc keymap to dismiss suggestion
+---@param buf number Buffer handle
+local function _setup_esc_mapping(buf)
+  if M._esc_mapped then
+    return
+  end
+
+  -- Set buffer-local Esc mapping in normal mode
+  vim.keymap.set("n", "<Esc>", function()
+    M.clear()
+    -- Re-feed Esc so it still works for other things (like clearing search highlight)
+    return "<Esc>"
+  end, { buffer = buf, expr = true, silent = true, desc = "Dismiss Stride suggestion" })
+
+  M._esc_mapped = true
+  M._esc_buf = buf
+  Log.debug("ui: Esc mapping set for buf %d", buf)
+end
+
+---Remove Esc keymap
+local function _clear_esc_mapping()
+  if not M._esc_mapped or not M._esc_buf then
+    return
+  end
+
+  -- Remove the buffer-local mapping
+  pcall(vim.keymap.del, "n", "<Esc>", { buffer = M._esc_buf })
+  M._esc_mapped = false
+  M._esc_buf = nil
+  Log.debug("ui: Esc mapping cleared")
+end
+
 ---Clear current ghost text
 function M.clear()
   -- Clear local suggestion extmark
@@ -56,6 +94,8 @@ function M.clear()
   M.remote_virt_id = nil
   M.current_suggestion = nil
   M.current_buf = nil
+
+  _clear_esc_mapping()
 end
 
 ---Render ghost text at position
@@ -212,6 +252,7 @@ function M.render_remote(suggestion, buf)
     col_end = suggestion.col_end,
   }
 
+  _setup_esc_mapping(buf)
   Log.debug("SUCCESS: remote suggestion rendered for line %d", suggestion.line)
 end
 

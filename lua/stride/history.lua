@@ -1,222 +1,263 @@
----@class Stride.EditDiff
----@field change_type "insert"|"delete"|"modification"
----@field line number 1-indexed line number
----@field original string|nil Original text (nil for insert)
----@field new string|nil New text (nil for delete)
+---@class Stride.TrackedChange
+---@field file string Relative file path
+---@field old_text string Text before change
+---@field new_text string Text after change
+---@field range {start_line: number, start_col: number, end_line: number, end_col: number}
+---@field timestamp number os.time() when change occurred
 
 ---@class Stride.History
----Buffer snapshot and diff computation for V2 next-edit prediction
+---Incremental change tracking across buffers for V2 next-edit prediction
 local M = {}
 
+local Config = require("stride.config")
 local Log = require("stride.log")
 
----@type string[]|nil Buffer lines snapshot taken on InsertEnter
-M._snapshot = nil
+---@type Stride.TrackedChange[] Recent changes across all buffers
+M._changes = {}
 
----@type number|nil Buffer handle for current snapshot
-M._snapshot_buf = nil
+---@type table<number, boolean> Buffers we've attached to
+M._attached_buffers = {}
 
----@type Stride.EditDiff[] Sliding window of recent edits
-M._edit_history = {}
+---@type table<number, string[]> Previous buffer state for computing diffs
+M._buffer_states = {}
 
----@type number Maximum edits to track in sliding window
-M._max_history = 5
-
----Take a snapshot of buffer contents
+---Get relative path for a buffer
 ---@param buf number Buffer handle
-function M.take_snapshot(buf)
+---@return string
+local function _get_relative_path(buf)
+  local full_path = vim.api.nvim_buf_get_name(buf)
+  if full_path == "" then
+    return "[scratch:" .. buf .. "]"
+  end
+  local cwd = vim.fn.getcwd()
+  if full_path:sub(1, #cwd) == cwd then
+    return full_path:sub(#cwd + 2) -- +2 to skip trailing slash
+  end
+  return full_path
+end
+
+---Record a change
+---@param change Stride.TrackedChange
+function M.record_change(change)
+  local max_changes = Config.options.max_tracked_changes or 10
+
+  table.insert(M._changes, change)
+
+  -- Trim to max
+  while #M._changes > max_changes do
+    table.remove(M._changes, 1)
+  end
+
+  Log.debug(
+    "history.record_change: %s lines %d-%d, now tracking %d changes",
+    change.file,
+    change.range.start_line,
+    change.range.end_line,
+    #M._changes
+  )
+end
+
+---Attach change tracking to a buffer
+---@param buf number Buffer handle
+function M.attach_buffer(buf)
+  if M._attached_buffers[buf] then
+    return -- Already attached
+  end
+
   if not vim.api.nvim_buf_is_valid(buf) then
-    Log.debug("history.take_snapshot: invalid buffer %d", buf)
     return
   end
 
-  M._snapshot = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  M._snapshot_buf = buf
-  Log.debug("history.take_snapshot: captured %d lines from buf %d", #M._snapshot, buf)
-end
-
----Clear snapshot and history (called on InsertLeave)
-function M.clear()
-  Log.debug("history.clear: clearing snapshot and history")
-  M._snapshot = nil
-  M._snapshot_buf = nil
-  M._edit_history = {}
-end
-
----Parse unified diff output into structured EditDiff objects
----@param diff_output string Output from vim.diff()
----@return Stride.EditDiff[]
-local function _parse_diff(diff_output)
-  local edits = {}
-
-  if not diff_output or diff_output == "" then
-    return edits
+  -- Skip special buffers
+  local buftype = vim.api.nvim_buf_get_option(buf, "buftype")
+  if buftype ~= "" then
+    return
   end
 
-  -- Parse unified diff format
-  -- @@ -start,count +start,count @@
-  -- Lines starting with - are deletions
-  -- Lines starting with + are additions
-  -- Lines starting with space are context
+  -- Store initial state
+  M._buffer_states[buf] = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
-  local lines = vim.split(diff_output, "\n")
-  local i = 1
-
-  while i <= #lines do
-    local line = lines[i]
-
-    -- Match hunk header: @@ -old_start,old_count +new_start,new_count @@
-    local old_start, old_count, new_start, new_count =
-      line:match("^@@ %-(%d+),?(%d*) %+(%d+),?(%d*) @@")
-
-    if old_start then
-      old_start = tonumber(old_start)
-      old_count = tonumber(old_count) or 1
-      new_start = tonumber(new_start)
-      new_count = tonumber(new_count) or 1
-
-      i = i + 1
-      local old_lines = {}
-      local new_lines = {}
-
-      -- Collect lines in this hunk
-      while i <= #lines and not lines[i]:match("^@@") do
-        local hunk_line = lines[i]
-        if hunk_line:sub(1, 1) == "-" then
-          table.insert(old_lines, hunk_line:sub(2))
-        elseif hunk_line:sub(1, 1) == "+" then
-          table.insert(new_lines, hunk_line:sub(2))
-        end
-        -- Skip context lines (starting with space)
-        i = i + 1
+  local ok = vim.api.nvim_buf_attach(buf, false, {
+    on_bytes = function(_, b, _, start_row, start_col, _, old_end_row, old_end_col, _, new_end_row, new_end_col)
+      -- Skip if buffer state not tracked (shouldn't happen but be safe)
+      if not M._buffer_states[b] then
+        return
       end
 
-      -- Determine change type and create EditDiff
-      if #old_lines == 0 and #new_lines > 0 then
-        -- Pure insertion
-        for j, new_text in ipairs(new_lines) do
-          table.insert(edits, {
-            change_type = "insert",
-            line = new_start + j - 1,
-            original = nil,
-            new = new_text,
-          })
-        end
-      elseif #old_lines > 0 and #new_lines == 0 then
-        -- Pure deletion
-        for j, old_text in ipairs(old_lines) do
-          table.insert(edits, {
-            change_type = "delete",
-            line = old_start + j - 1,
-            original = old_text,
-            new = nil,
-          })
-        end
-      else
-        -- Modification (paired old/new lines)
-        local max_lines = math.max(#old_lines, #new_lines)
-        for j = 1, max_lines do
-          local old_text = old_lines[j]
-          local new_text = new_lines[j]
-          if old_text and new_text then
-            table.insert(edits, {
-              change_type = "modification",
-              line = old_start + j - 1,
-              original = old_text,
-              new = new_text,
-            })
-          elseif old_text then
-            table.insert(edits, {
-              change_type = "delete",
-              line = old_start + j - 1,
-              original = old_text,
-              new = nil,
-            })
-          elseif new_text then
-            table.insert(edits, {
-              change_type = "insert",
-              line = new_start + j - 1,
-              original = nil,
-              new = new_text,
-            })
-          end
-        end
+      local old_lines = M._buffer_states[b]
+      local new_lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
+
+      -- Extract the changed text from old and new states
+      local old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, old_end_col)
+      local new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, new_end_col)
+
+      -- Only record if there's actual text change
+      if old_text ~= new_text then
+        M.record_change({
+          file = _get_relative_path(b),
+          old_text = old_text,
+          new_text = new_text,
+          range = {
+            start_line = start_row + 1, -- Convert to 1-indexed
+            start_col = start_col,
+            end_line = start_row + math.max(old_end_row, new_end_row) + 1,
+            end_col = math.max(old_end_col, new_end_col),
+          },
+          timestamp = os.time(),
+        })
       end
-    else
-      i = i + 1
-    end
-  end
 
-  return edits
-end
+      -- Update stored state
+      M._buffer_states[b] = new_lines
+    end,
 
----Compute diff between snapshot and current buffer state
----@param buf number Buffer handle
----@return Stride.EditDiff[] Array of edit diffs
-function M.compute_diff(buf)
-  if not M._snapshot then
-    Log.debug("history.compute_diff: no snapshot available")
-    return {}
-  end
-
-  if M._snapshot_buf ~= buf then
-    Log.debug("history.compute_diff: buffer mismatch (snapshot=%d, current=%d)", M._snapshot_buf or -1, buf)
-    return {}
-  end
-
-  if not vim.api.nvim_buf_is_valid(buf) then
-    Log.debug("history.compute_diff: invalid buffer %d", buf)
-    return {}
-  end
-
-  local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local snapshot_text = table.concat(M._snapshot, "\n")
-  local current_text = table.concat(current_lines, "\n")
-
-  if snapshot_text == current_text then
-    Log.debug("history.compute_diff: no changes detected")
-    return {}
-  end
-
-  -- Use vim.diff for unified diff output
-  local diff_output = vim.diff(snapshot_text, current_text, {
-    result_type = "unified",
-    ctxlen = 0, -- No context lines needed
+    on_detach = function(_, b)
+      M._attached_buffers[b] = nil
+      M._buffer_states[b] = nil
+      Log.debug("history: detached from buffer %d", b)
+    end,
   })
 
-  Log.debug("history.compute_diff: raw diff output:\n%s", diff_output or "(nil)")
+  if ok then
+    M._attached_buffers[buf] = true
+    Log.debug("history.attach_buffer: attached to buffer %d (%s)", buf, _get_relative_path(buf))
+  end
+end
 
-  local edits = _parse_diff(diff_output)
-  Log.debug("history.compute_diff: parsed %d edits", #edits)
+---Extract text from lines given byte positions
+---@param lines string[] Buffer lines
+---@param start_row number 0-indexed start row
+---@param start_col number 0-indexed start column (bytes)
+---@param end_row number 0-indexed end row
+---@param end_col number 0-indexed end column (bytes)
+---@return string
+function M._extract_text(lines, start_row, start_col, end_row, end_col)
+  if #lines == 0 then
+    return ""
+  end
 
-  -- Add to sliding window history
-  for _, edit in ipairs(edits) do
-    table.insert(M._edit_history, edit)
-    -- Trim to max history size
-    while #M._edit_history > M._max_history do
-      table.remove(M._edit_history, 1)
+  -- Clamp to valid range
+  start_row = math.max(0, math.min(start_row, #lines - 1))
+  end_row = math.max(0, math.min(end_row, #lines - 1))
+
+  if start_row == end_row then
+    local line = lines[start_row + 1] or ""
+    return line:sub(start_col + 1, end_col)
+  end
+
+  local result = {}
+  for row = start_row, end_row do
+    local line = lines[row + 1] or ""
+    if row == start_row then
+      table.insert(result, line:sub(start_col + 1))
+    elseif row == end_row then
+      table.insert(result, line:sub(1, end_col))
+    else
+      table.insert(result, line)
     end
   end
 
-  -- Update snapshot to current state for next diff
-  M._snapshot = current_lines
-
-  return edits
+  return table.concat(result, "\n")
 end
 
----Get recent edit history (sliding window)
----@return Stride.EditDiff[]
-function M.get_history()
-  return M._edit_history
-end
-
----Get the most recent edit
----@return Stride.EditDiff|nil
-function M.get_last_edit()
-  if #M._edit_history == 0 then
-    return nil
+---Detach from a buffer
+---@param buf number Buffer handle
+function M.detach_buffer(buf)
+  if M._attached_buffers[buf] then
+    -- nvim_buf_attach returns a detach function, but we don't store it
+    -- The on_detach callback will clean up
+    M._attached_buffers[buf] = nil
+    M._buffer_states[buf] = nil
   end
-  return M._edit_history[#M._edit_history]
+end
+
+---Get all tracked changes
+---@return Stride.TrackedChange[]
+function M.get_changes()
+  return M._changes
+end
+
+---Get changes formatted for prompt, respecting token budget
+---@param token_budget? number Max tokens (default from config)
+---@return string Formatted diff text
+function M.get_changes_for_prompt(token_budget)
+  token_budget = token_budget or Config.options.token_budget or 1000
+
+  local selected = {}
+  local char_budget = token_budget * 3 -- ~3 chars per token
+  local char_count = 0
+
+  -- Start from most recent and work backwards
+  for i = #M._changes, 1, -1 do
+    local change = M._changes[i]
+
+    -- Format as unified diff style
+    local diff_text = M._format_change_as_diff(change)
+    local diff_chars = #diff_text
+
+    if char_count + diff_chars > char_budget then
+      break
+    end
+
+    table.insert(selected, 1, diff_text) -- Prepend to maintain order
+    char_count = char_count + diff_chars
+  end
+
+  if #selected == 0 then
+    return "(no recent changes)"
+  end
+
+  return table.concat(selected, "\n")
+end
+
+---Format a single change as unified diff
+---@param change Stride.TrackedChange
+---@return string
+function M._format_change_as_diff(change)
+  local lines = {}
+
+  table.insert(lines, string.format("%s:%d:%d", change.file, change.range.start_line, change.range.end_line))
+
+  -- Format old text lines with -
+  if change.old_text and change.old_text ~= "" then
+    for _, line in ipairs(vim.split(change.old_text, "\n")) do
+      table.insert(lines, "- " .. line)
+    end
+  end
+
+  -- Format new text lines with +
+  if change.new_text and change.new_text ~= "" then
+    for _, line in ipairs(vim.split(change.new_text, "\n")) do
+      table.insert(lines, "+ " .. line)
+    end
+  end
+
+  return table.concat(lines, "\n")
+end
+
+---Clear all tracked changes
+function M.clear()
+  M._changes = {}
+  Log.debug("history.clear: cleared all tracked changes")
+end
+
+---Get count of tracked changes
+---@return number
+function M.get_change_count()
+  return #M._changes
+end
+
+---Get changes for a specific file
+---@param file string File path (relative)
+---@return Stride.TrackedChange[]
+function M.get_changes_for_file(file)
+  local result = {}
+  for _, change in ipairs(M._changes) do
+    if change.file == file then
+      table.insert(result, change)
+    end
+  end
+  return result
 end
 
 return M

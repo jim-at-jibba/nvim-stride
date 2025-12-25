@@ -51,6 +51,24 @@ describe("stride", function()
       Config.setup({ mode = "both" })
       assert.equals("both", Config.options.mode)
     end)
+
+    it("has V2 prediction defaults", function()
+      Config.setup({})
+      assert.equals(10, Config.options.max_tracked_changes)
+      assert.equals(1000, Config.options.token_budget)
+      assert.equals(200, Config.options.small_file_threshold)
+    end)
+
+    it("allows overriding V2 options", function()
+      Config.setup({
+        max_tracked_changes = 20,
+        token_budget = 500,
+        small_file_threshold = 100,
+      })
+      assert.equals(20, Config.options.max_tracked_changes)
+      assert.equals(500, Config.options.token_budget)
+      assert.equals(100, Config.options.small_file_threshold)
+    end)
   end)
 
   describe("ui", function()
@@ -149,89 +167,110 @@ describe("stride", function()
   end)
 
   describe("history", function()
-    local buf
-
     before_each(function()
-      buf = vim.api.nvim_create_buf(false, true)
-      vim.api.nvim_set_current_buf(buf)
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "local apple = 1", "print(apple)", "return apple" })
       History.clear()
+      History._attached_buffers = {}
+      History._buffer_states = {}
     end)
 
     after_each(function()
       History.clear()
-      if vim.api.nvim_buf_is_valid(buf) then
-        vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    it("records a change", function()
+      History.record_change({
+        file = "test.lua",
+        old_text = "apple",
+        new_text = "orange",
+        range = { start_line = 1, start_col = 6, end_line = 1, end_col = 11 },
+        timestamp = os.time(),
+      })
+      assert.equals(1, History.get_change_count())
+      local changes = History.get_changes()
+      assert.equals("apple", changes[1].old_text)
+      assert.equals("orange", changes[1].new_text)
+    end)
+
+    it("respects max_tracked_changes limit", function()
+      Config.setup({ max_tracked_changes = 3 })
+      for i = 1, 5 do
+        History.record_change({
+          file = "test.lua",
+          old_text = "old" .. i,
+          new_text = "new" .. i,
+          range = { start_line = i, start_col = 0, end_line = i, end_col = 4 },
+          timestamp = os.time(),
+        })
       end
+      assert.equals(3, History.get_change_count())
+      -- Should have most recent 3 (old3->new3, old4->new4, old5->new5)
+      local changes = History.get_changes()
+      assert.equals("old3", changes[1].old_text)
+      assert.equals("old5", changes[3].old_text)
     end)
 
-    it("takes buffer snapshot", function()
-      History.take_snapshot(buf)
-      assert.is_not_nil(History._snapshot)
-      assert.equals(3, #History._snapshot)
-    end)
-
-    it("detects no changes when buffer unchanged", function()
-      History.take_snapshot(buf)
-      local edits = History.compute_diff(buf)
-      assert.same({}, edits)
-    end)
-
-    it("detects line modification", function()
-      History.take_snapshot(buf)
-      vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "local orange = 1" })
-      local edits = History.compute_diff(buf)
-      assert.equals(1, #edits)
-      assert.equals("modification", edits[1].change_type)
-      assert.equals(1, edits[1].line)
-      assert.equals("local apple = 1", edits[1].original)
-      assert.equals("local orange = 1", edits[1].new)
-    end)
-
-    it("detects line insertion", function()
-      History.take_snapshot(buf)
-      vim.api.nvim_buf_set_lines(buf, 1, 1, false, { "local banana = 2" })
-      local edits = History.compute_diff(buf)
-      assert.is_true(#edits >= 1)
-      -- At least one insert should be detected
-      local has_insert = false
-      for _, edit in ipairs(edits) do
-        if edit.change_type == "insert" then
-          has_insert = true
-          break
-        end
-      end
-      assert.is_true(has_insert)
-    end)
-
-    it("clears history", function()
-      History.take_snapshot(buf)
-      vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "local orange = 1" })
-      History.compute_diff(buf)
-      assert.is_true(#History.get_history() > 0)
+    it("clears all changes", function()
+      History.record_change({
+        file = "test.lua",
+        old_text = "foo",
+        new_text = "bar",
+        range = { start_line = 1, start_col = 0, end_line = 1, end_col = 3 },
+        timestamp = os.time(),
+      })
+      assert.equals(1, History.get_change_count())
       History.clear()
-      assert.same({}, History.get_history())
-      assert.is_nil(History._snapshot)
+      assert.equals(0, History.get_change_count())
     end)
 
-    it("maintains sliding window of edits", function()
-      History.take_snapshot(buf)
-      -- Make multiple edits
-      for i = 1, 10 do
-        vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "local var" .. i .. " = " .. i })
-        History.compute_diff(buf)
-      end
-      -- Should be limited to max history size (5)
-      assert.is_true(#History.get_history() <= History._max_history)
+    it("formats changes for prompt", function()
+      History.record_change({
+        file = "test.lua",
+        old_text = "apple",
+        new_text = "orange",
+        range = { start_line = 5, start_col = 0, end_line = 5, end_col = 6 },
+        timestamp = os.time(),
+      })
+      local prompt = History.get_changes_for_prompt()
+      assert.is_not_nil(prompt:find("test.lua:5:5"))
+      assert.is_not_nil(prompt:find("- apple"))
+      assert.is_not_nil(prompt:find("+ orange"))
     end)
 
-    it("returns last edit", function()
-      History.take_snapshot(buf)
-      vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "local orange = 1" })
-      History.compute_diff(buf)
-      local last = History.get_last_edit()
-      assert.is_not_nil(last)
-      assert.equals("modification", last.change_type)
+    it("returns no changes message when empty", function()
+      local prompt = History.get_changes_for_prompt()
+      assert.equals("(no recent changes)", prompt)
+    end)
+
+    it("extracts text from single line", function()
+      local lines = { "hello world" }
+      local text = History._extract_text(lines, 0, 0, 0, 5)
+      assert.equals("hello", text)
+    end)
+
+    it("extracts text from multiple lines", function()
+      local lines = { "line one", "line two", "line three" }
+      local text = History._extract_text(lines, 0, 5, 2, 4)
+      assert.equals("one\nline two\nline", text)
+    end)
+
+    it("gets changes for specific file", function()
+      History.record_change({
+        file = "a.lua",
+        old_text = "x",
+        new_text = "y",
+        range = { start_line = 1, start_col = 0, end_line = 1, end_col = 1 },
+        timestamp = os.time(),
+      })
+      History.record_change({
+        file = "b.lua",
+        old_text = "m",
+        new_text = "n",
+        range = { start_line = 1, start_col = 0, end_line = 1, end_col = 1 },
+        timestamp = os.time(),
+      })
+      local a_changes = History.get_changes_for_file("a.lua")
+      assert.equals(1, #a_changes)
+      assert.equals("a.lua", a_changes[1].file)
     end)
   end)
 end)

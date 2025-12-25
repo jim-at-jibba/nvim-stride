@@ -1,16 +1,21 @@
 ---@class Stride.RemoteSuggestion
 ---@field line number 1-indexed target line
----@field original string Text to replace
+---@field original string Text to replace (the "find" text)
 ---@field new string Replacement text
 ---@field col_start number 0-indexed column start
 ---@field col_end number 0-indexed column end
 ---@field is_remote boolean Always true for remote suggestions
 
+---@class Stride.CursorPos
+---@field line number 1-indexed line
+---@field col number 0-indexed column
+
 ---@class Stride.Predictor
----Next-edit prediction module for V2
+---Next-edit prediction module for V2 (magenta-style)
 local M = {}
 
 local Config = require("stride.config")
+local History = require("stride.history")
 local Log = require("stride.log")
 local curl = require("plenary.curl")
 
@@ -29,114 +34,220 @@ function M.cancel()
   end
 end
 
----Format edit history for prompt
----@param edits Stride.EditDiff[]
----@return string
-local function _format_edits(edits)
-  local parts = {}
-  for _, edit in ipairs(edits) do
-    if edit.change_type == "modification" then
-      table.insert(parts, string.format('Line %d: "%s" → "%s"', edit.line, edit.original, edit.new))
-    elseif edit.change_type == "insert" then
-      table.insert(parts, string.format('Line %d: inserted "%s"', edit.line, edit.new))
-    elseif edit.change_type == "delete" then
-      table.insert(parts, string.format('Line %d: deleted "%s"', edit.line, edit.original))
-    end
-  end
-  return table.concat(parts, "\n")
-end
-
----Get buffer context around edits
+---Get buffer context centered around cursor position
 ---@param buf number Buffer handle
----@param context_lines number Lines of context
----@return string
-local function _get_buffer_context(buf, context_lines)
+---@param cursor_pos Stride.CursorPos Cursor position {line, col}
+---@return string context_text, number start_line, number end_line
+local function _get_buffer_context(buf, cursor_pos)
   local total_lines = vim.api.nvim_buf_line_count(buf)
-  local start_line = 0
-  local end_line = math.min(total_lines, context_lines * 2)
+  local context_lines = Config.options.context_lines or 30
+  local small_threshold = Config.options.small_file_threshold or 200
 
-  local lines = vim.api.nvim_buf_get_lines(buf, start_line, end_line, false)
+  local start_line, end_line
 
-  -- Add line numbers for context
+  -- Small file: send everything
+  if total_lines <= small_threshold then
+    start_line = 1
+    end_line = total_lines
+  else
+    -- Center around cursor: 30% before, 70% after
+    local before = math.floor(context_lines * 0.3)
+    local after = context_lines - before
+
+    start_line = math.max(1, cursor_pos.line - before)
+    end_line = math.min(total_lines, cursor_pos.line + after)
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(buf, start_line - 1, end_line, false)
+
+  -- Add line numbers and cursor marker
   local numbered = {}
   for i, line in ipairs(lines) do
-    table.insert(numbered, string.format("%d: %s", start_line + i, line))
+    local line_num = start_line + i - 1
+    local display_line = line
+
+    -- Mark cursor position with │
+    if line_num == cursor_pos.line then
+      local col = math.min(cursor_pos.col, #line)
+      display_line = line:sub(1, col) .. "│" .. line:sub(col + 1)
+    end
+
+    table.insert(numbered, string.format("%d: %s", line_num, display_line))
   end
 
-  return table.concat(numbered, "\n")
+  return table.concat(numbered, "\n"), start_line, end_line
 end
 
----Validate LLM response
+---Get relative path for current buffer
+---@param buf number Buffer handle
+---@return string
+local function _get_relative_path(buf)
+  local full_path = vim.api.nvim_buf_get_name(buf)
+  if full_path == "" then
+    return "[buffer]"
+  end
+  local cwd = vim.fn.getcwd()
+  if full_path:sub(1, #cwd) == cwd then
+    return full_path:sub(#cwd + 2)
+  end
+  return full_path
+end
+
+---Find all occurrences of text in buffer
+---@param buf number Buffer handle
+---@param find_text string Text to find
+---@return {line: number, col_start: number, col_end: number}[]
+local function _find_all_occurrences(buf, find_text)
+  local occurrences = {}
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+  for line_num, line in ipairs(lines) do
+    local start_pos = 1
+    while true do
+      local col_start, col_end = line:find(find_text, start_pos, true)
+      if not col_start then
+        break
+      end
+      table.insert(occurrences, {
+        line = line_num,
+        col_start = col_start - 1, -- 0-indexed
+        col_end = col_end, -- exclusive
+      })
+      start_pos = col_start + 1
+    end
+  end
+
+  return occurrences
+end
+
+---Select best match near cursor
+---@param occurrences {line: number, col_start: number, col_end: number}[]
+---@param cursor_pos Stride.CursorPos
+---@return {line: number, col_start: number, col_end: number}|nil
+local function _select_best_match(occurrences, cursor_pos)
+  if #occurrences == 0 then
+    return nil
+  end
+
+  if #occurrences == 1 then
+    return occurrences[1]
+  end
+
+  -- Priority: cursor line > after cursor > before cursor
+  -- Within same priority: closest to cursor wins
+  local best = nil
+  local best_distance = math.huge
+
+  for _, occ in ipairs(occurrences) do
+    local distance = math.abs(occ.line - cursor_pos.line)
+
+    -- Prefer matches after cursor over before
+    if occ.line >= cursor_pos.line then
+      distance = distance * 0.9 -- Slight preference for after
+    end
+
+    if distance < best_distance then
+      best = occ
+      best_distance = distance
+    end
+  end
+
+  return best
+end
+
+---Validate LLM response (find/replace format)
 ---@param response table Parsed JSON response
 ---@param buf number Buffer handle
----@param edited_lines table<number, boolean> Lines that were just edited
+---@param cursor_pos Stride.CursorPos
 ---@return Stride.RemoteSuggestion|nil
-local function _validate_response(response, buf, edited_lines)
+local function _validate_response(response, buf, cursor_pos)
   -- Check for null/no suggestion
-  if not response.line or response.line == vim.NIL then
+  if not response.find or response.find == vim.NIL then
     Log.debug("predictor: LLM returned no suggestion")
     return nil
   end
 
-  local line = tonumber(response.line)
-  if not line then
-    Log.debug("predictor: invalid line number in response")
+  if not response.replace then
+    Log.debug("predictor: missing replace text")
     return nil
   end
 
-  -- Check line exists
-  local total_lines = vim.api.nvim_buf_line_count(buf)
-  if line < 1 or line > total_lines then
-    Log.debug("predictor: line %d out of range (1-%d)", line, total_lines)
+  -- Remove cursor marker if present
+  local find_text = response.find:gsub("│", "")
+  local replace_text = response.replace:gsub("│", "")
+
+  -- Find all occurrences
+  local occurrences = _find_all_occurrences(buf, find_text)
+
+  if #occurrences == 0 then
+    Log.debug("predictor: find text '%s' not found in buffer", find_text)
     return nil
   end
 
-  -- Reject self-edit (same line user just edited)
-  if edited_lines[line] then
-    Log.debug("predictor: rejecting self-edit on line %d", line)
+  -- Select best match near cursor
+  local best = _select_best_match(occurrences, cursor_pos)
+  if not best then
     return nil
   end
 
-  -- Validate original and new text exist
-  if not response.original or not response.new then
-    Log.debug("predictor: missing original or new text")
-    return nil
-  end
-
-  -- Validate original text exists on target line
-  local line_content = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1] or ""
-  local col_start, col_end = line_content:find(response.original, 1, true)
-
-  if not col_start then
-    Log.debug("predictor: original text '%s' not found on line %d", response.original, line)
-    return nil
-  end
+  Log.debug("predictor: found %d occurrences, selected line %d", #occurrences, best.line)
 
   return {
-    line = line,
-    original = response.original,
-    new = response.new,
-    col_start = col_start - 1, -- Convert to 0-indexed
-    col_end = col_end, -- End is exclusive in nvim_buf_set_text
+    line = best.line,
+    original = find_text,
+    new = replace_text,
+    col_start = best.col_start,
+    col_end = best.col_end,
     is_remote = true,
   }
 end
 
+---System prompt for general next-edit prediction (magenta-style)
+local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent changes and cursor position (marked by │).
+
+Rules:
+- Return ONLY valid JSON, no markdown
+- Format: {"find": "text_to_find", "replace": "replacement_text"}
+- Remove │ from find and replace text
+- The "find" text must exist in the current context
+- If no prediction is possible: {"find": null, "replace": null}
+- Predict any likely edit, not just renames
+
+Examples:
+
+Recent changes show function signature change:
+- function myFunction(a: string, b: number) {
++ function myFunction({a, b}: {a: string, b: number}) {
+Context has: myFunction("hello", 2)
+Prediction: {"find": "myFunction(\"hello\", 2)", "replace": "myFunction({a: \"hello\", b: 2})"}
+
+Recent changes show variable rename:
+- const apple = "fruit"
++ const orange = "fruit"
+Context has: console.log(apple)
+Prediction: {"find": "apple", "replace": "orange"}
+
+User typing console.log and cursor at console│
+Prediction: {"find": "console\n", "replace": "console.log();\n"}
+]]
+
 ---Fetch next-edit prediction from LLM
----@param edits Stride.EditDiff[] Recent edits
 ---@param buf number Buffer handle
+---@param cursor_pos Stride.CursorPos
 ---@param callback fun(suggestion: Stride.RemoteSuggestion|nil)
-function M.fetch_next_edit(edits, buf, callback)
+function M.fetch_next_edit(buf, cursor_pos, callback)
   M.cancel()
 
-  if #edits == 0 then
-    Log.debug("predictor: no edits to analyze")
+  if not Config.options.api_key then
+    Log.error("predictor: CEREBRAS_API_KEY not set")
     callback(nil)
     return
   end
 
-  if not Config.options.api_key then
-    Log.error("predictor: CEREBRAS_API_KEY not set")
+  -- Get recent changes
+  local changes_text = History.get_changes_for_prompt(Config.options.token_budget)
+  if changes_text == "(no recent changes)" then
+    Log.debug("predictor: no recent changes to analyze")
     callback(nil)
     return
   end
@@ -145,40 +256,28 @@ function M.fetch_next_edit(edits, buf, callback)
   local current_request_id = M._request_id
   local start_time = vim.loop.hrtime()
 
-  -- Track which lines were just edited (for self-edit rejection)
-  local edited_lines = {}
-  for _, edit in ipairs(edits) do
-    edited_lines[edit.line] = true
-  end
-
-  local edit_summary = _format_edits(edits)
-  local buffer_context = _get_buffer_context(buf, Config.options.context_lines or 30)
-
-  local system_prompt = [[You are a code refactoring assistant. Analyze recent edits and identify ONE other location that likely needs the same change.
-
-Rules:
-- Return ONLY valid JSON, no markdown or explanation
-- If a related edit is needed: {"line": N, "original": "text to replace", "new": "replacement text"}
-- If no edit is needed: {"line": null}
-- Focus on variable renames, function calls, and related references
-- Do NOT suggest edits on lines that were just changed
-- Suggest only ONE edit at a time]]
+  -- Get buffer context centered on cursor
+  local buffer_context, start_line, end_line = _get_buffer_context(buf, cursor_pos)
+  local file_path = _get_relative_path(buf)
 
   local user_prompt = string.format(
-    [[Recent edits:
+    [[Recent changes:
 %s
 
-File context:
+Current context (│ marks cursor position):
+%s:%d:%d
 %s
 
-Analyze the edits above. Is there another location that needs a similar change?
-Return JSON only.]],
-    edit_summary,
+Predict the most likely next edit the user will make.]],
+    changes_text,
+    file_path,
+    start_line,
+    end_line,
     buffer_context
   )
 
   local messages = {
-    { role = "system", content = system_prompt },
+    { role = "system", content = SYSTEM_PROMPT },
     { role = "user", content = user_prompt },
   }
 
@@ -186,13 +285,14 @@ Return JSON only.]],
     model = Config.options.model,
     messages = messages,
     temperature = 0,
-    max_tokens = 128,
+    max_tokens = 256,
   }
 
   Log.debug("===== PREDICTOR REQUEST =====")
   Log.debug("request_id=%d", current_request_id)
-  Log.debug("edits:\n%s", edit_summary)
-  Log.debug("context_lines=%d", #vim.split(buffer_context, "\n"))
+  Log.debug("cursor: line=%d col=%d", cursor_pos.line, cursor_pos.col)
+  Log.debug("context: %s lines %d-%d", file_path, start_line, end_line)
+  Log.debug("user_prompt:\n%s", user_prompt)
 
   M._active_job = curl.post(Config.options.endpoint, {
     body = vim.fn.json_encode(payload),
@@ -253,10 +353,14 @@ Return JSON only.]],
       end
 
       -- Validate and create suggestion
-      local suggestion = _validate_response(json_response, buf, edited_lines)
+      local suggestion = _validate_response(json_response, buf, cursor_pos)
       if suggestion then
-        Log.debug("predictor: valid suggestion for line %d: '%s' → '%s'",
-          suggestion.line, suggestion.original, suggestion.new)
+        Log.debug(
+          "predictor: valid suggestion for line %d: '%s' → '%s'",
+          suggestion.line,
+          suggestion.original,
+          suggestion.new
+        )
       end
 
       callback(suggestion)

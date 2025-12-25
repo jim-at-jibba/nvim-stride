@@ -34,22 +34,33 @@ local function _mode_has_refactor()
   return mode == "refactor" or mode == "both"
 end
 
+---Get current cursor position
+---@return Stride.CursorPos
+local function _get_cursor_pos()
+  local pos = vim.api.nvim_win_get_cursor(0)
+  return {
+    line = pos[1], -- 1-indexed
+    col = pos[2], -- 0-indexed
+  }
+end
+
 ---Trigger V2 refactor prediction based on recent edits
 ---@param buf number Buffer handle
-local function _trigger_refactor_prediction(buf)
+---@param cursor_pos Stride.CursorPos
+local function _trigger_refactor_prediction(buf, cursor_pos)
   if not _mode_has_refactor() then
     return
   end
 
-  local edits = History.compute_diff(buf)
-  if #edits == 0 then
-    Log.debug("refactor: no edits detected, skipping prediction")
+  local change_count = History.get_change_count()
+  if change_count == 0 then
+    Log.debug("refactor: no changes tracked, skipping prediction")
     return
   end
 
-  Log.debug("refactor: %d edits detected, fetching next-edit prediction", #edits)
+  Log.debug("refactor: %d changes tracked, fetching next-edit prediction", change_count)
 
-  Predictor.fetch_next_edit(edits, buf, function(suggestion)
+  Predictor.fetch_next_edit(buf, cursor_pos, function(suggestion)
     if not suggestion then
       Log.debug("refactor: no suggestion returned")
       return
@@ -91,25 +102,29 @@ function M.setup(opts)
   Log.debug("disabled_filetypes=%s", vim.inspect(Config.options.disabled_filetypes))
   Log.debug("mode=%s", Config.options.mode)
   Log.debug("show_remote=%s", tostring(Config.options.show_remote))
+  Log.debug("max_tracked_changes=%d", Config.options.max_tracked_changes or 10)
+  Log.debug("token_budget=%d", Config.options.token_budget or 1000)
+  Log.debug("small_file_threshold=%d", Config.options.small_file_threshold or 200)
 
   local augroup = vim.api.nvim_create_augroup("StrideGroup", { clear = true })
 
-  -- V2: Take snapshot on InsertEnter for history tracking
-  vim.api.nvim_create_autocmd("InsertEnter", {
+  -- V2: Attach change tracker to buffers
+  vim.api.nvim_create_autocmd("BufEnter", {
     group = augroup,
-    callback = function()
-      if _is_disabled() then
-        return
-      end
+    callback = function(args)
       if _mode_has_refactor() then
-        local buf = vim.api.nvim_get_current_buf()
-        History.take_snapshot(buf)
-        Log.debug("InsertEnter: snapshot taken for buf %d", buf)
+        History.attach_buffer(args.buf)
       end
     end,
   })
 
-  -- Trigger prediction on text change (debounced)
+  -- Also attach to current buffer on setup
+  if _mode_has_refactor() then
+    local current_buf = vim.api.nvim_get_current_buf()
+    History.attach_buffer(current_buf)
+  end
+
+  -- Trigger prediction on text change (debounced) - V1 only during insert
   vim.api.nvim_create_autocmd("TextChangedI", {
     group = augroup,
     callback = function()
@@ -117,53 +132,69 @@ function M.setup(opts)
         Log.debug("TextChangedI: filetype disabled, skipping")
         return
       end
-      Log.debug("TextChangedI: triggered, scheduling prediction")
+
+      -- Only V1 completion triggers during insert
+      if not _mode_has_completion() then
+        return
+      end
+
+      Log.debug("TextChangedI: triggered, scheduling V1 prediction")
       Ui.clear()
       Client.cancel()
-      Predictor.cancel()
-
-      local buf = vim.api.nvim_get_current_buf()
 
       Utils.debounce(Config.options.debounce_ms, function()
         if _is_disabled() then
           return
         end
 
-        -- V1: Completion mode
-        if _mode_has_completion() then
-          Log.debug("debounce complete, fetching V1 completion")
-          local ctx = Utils.get_context(Config.options.context_lines)
-          Client.fetch_prediction(ctx, Ui.render)
-        end
-
-        -- V2: Refactor mode
-        if _mode_has_refactor() then
-          Log.debug("debounce complete, fetching V2 refactor prediction")
-          _trigger_refactor_prediction(buf)
-        end
+        Log.debug("debounce complete, fetching V1 completion")
+        local ctx = Utils.get_context(Config.options.context_lines)
+        Client.fetch_prediction(ctx, Ui.render)
       end)
     end,
   })
 
-  -- Clear on cursor move or mode change
-  vim.api.nvim_create_autocmd({ "CursorMovedI", "ModeChanged" }, {
+  -- Clear on cursor move (in insert mode)
+  vim.api.nvim_create_autocmd("CursorMovedI", {
     group = augroup,
     callback = function()
       Ui.clear()
       Client.cancel()
-      Predictor.cancel()
     end,
   })
 
-  -- V2: Clear history on InsertLeave
+  -- V2: Trigger refactor prediction on InsertLeave (after debounce)
   vim.api.nvim_create_autocmd("InsertLeave", {
     group = augroup,
     callback = function()
+      -- Clear any V1 suggestions
       Ui.clear()
       Client.cancel()
       Predictor.cancel()
-      History.clear()
-      Log.debug("InsertLeave: history cleared")
+
+      if _is_disabled() then
+        return
+      end
+
+      -- V2: Trigger prediction based on tracked changes
+      if _mode_has_refactor() then
+        local buf = vim.api.nvim_get_current_buf()
+        local cursor_pos = _get_cursor_pos()
+
+        Utils.debounce(Config.options.debounce_ms, function()
+          _trigger_refactor_prediction(buf, cursor_pos)
+        end)
+      end
+    end,
+  })
+
+  -- Clear on mode change (e.g., leaving normal mode)
+  vim.api.nvim_create_autocmd("ModeChanged", {
+    group = augroup,
+    pattern = "*:n", -- Entering normal mode
+    callback = function()
+      -- Don't clear on InsertLeave->Normal, let the prediction show
+      -- This is handled by the Esc keymap in UI
     end,
   })
 
@@ -172,7 +203,27 @@ function M.setup(opts)
     return M.accept()
   end, { expr = true, silent = true })
 
-  Log.debug("setup complete, keymap=%s, debounce=%dms, mode=%s", Config.options.accept_keymap, Config.options.debounce_ms, Config.options.mode)
+  -- Normal mode Tab: accept remote suggestion
+  vim.keymap.set("n", Config.options.accept_keymap, function()
+    return M.accept()
+  end, { expr = true, silent = true })
+
+  -- Create :StrideClear command
+  vim.api.nvim_create_user_command("StrideClear", function()
+    History.clear()
+    Ui.clear()
+    Predictor.cancel()
+    Client.cancel()
+    Log.debug(":StrideClear executed")
+    vim.notify("Stride: cleared change history and suggestions", vim.log.levels.INFO)
+  end, { desc = "Clear Stride change history and suggestions" })
+
+  Log.debug(
+    "setup complete, keymap=%s, debounce=%dms, mode=%s",
+    Config.options.accept_keymap,
+    Config.options.debounce_ms,
+    Config.options.mode
+  )
 end
 
 ---Accept current suggestion (V1 local or V2 remote)
@@ -210,8 +261,9 @@ function M.accept()
 
       -- Auto-trigger next prediction after accepting (chain edits)
       if _mode_has_refactor() then
+        local cursor_pos = _get_cursor_pos()
         vim.defer_fn(function()
-          _trigger_refactor_prediction(buf)
+          _trigger_refactor_prediction(buf, cursor_pos)
         end, 50) -- Small delay to let buffer update
       end
     end)
