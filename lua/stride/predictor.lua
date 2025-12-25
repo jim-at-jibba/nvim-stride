@@ -467,6 +467,7 @@ Predict the most likely next edit the user will make.]],
     messages = messages,
     temperature = 0,
     max_tokens = 256,
+    reasoning_effort = "low",
   }
 
   Log.debug("===== PREDICTOR REQUEST =====")

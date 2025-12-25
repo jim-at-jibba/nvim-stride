@@ -147,6 +147,7 @@ Output only the completion text.]],
     temperature = 0,
     max_tokens = 128,
     stop = { "<|eot_id|>", "<|end_of_text|>", "\n\n" },
+    reasoning_effort = "low",
   }
 
   Log.debug("===== API REQUEST START =====")
