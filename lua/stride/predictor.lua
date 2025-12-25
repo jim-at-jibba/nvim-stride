@@ -100,7 +100,7 @@ end
 ---Find all occurrences of text in buffer
 ---@param buf number Buffer handle
 ---@param find_text string Text to find
----@return {line: number, col_start: number, col_end: number}[]
+---@return {line: number, col_start: number, col_end: number, line_text: string}[]
 local function _find_all_occurrences(buf, find_text)
   local occurrences = {}
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -116,12 +116,52 @@ local function _find_all_occurrences(buf, find_text)
         line = line_num,
         col_start = col_start - 1, -- 0-indexed
         col_end = col_end, -- exclusive
+        line_text = line, -- store full line for insert detection
       })
       start_pos = col_start + 1
     end
   end
 
   return occurrences
+end
+
+---Check if insert text already exists adjacent to anchor
+---@param occ {line: number, col_start: number, col_end: number, line_text: string}
+---@param insert_text string Text that would be inserted
+---@param position "after"|"before" Insert position
+---@return boolean true if already inserted
+local function _already_inserted(occ, insert_text, position)
+  local line = occ.line_text
+  if not line then
+    return false
+  end
+
+  -- Normalize insert text (strip leading/trailing whitespace for comparison)
+  local normalized_insert = insert_text:match("^%s*(.-)%s*$")
+  if not normalized_insert or normalized_insert == "" then
+    return false
+  end
+
+  if position == "after" then
+    -- Check if text after anchor contains the insert text
+    local after_anchor = line:sub(occ.col_end + 1)
+    -- Check immediate vicinity (within reasonable range)
+    local check_range = after_anchor:sub(1, #insert_text + 10)
+    if check_range:find(normalized_insert, 1, true) then
+      return true
+    end
+  else
+    -- Check if text before anchor contains the insert text
+    local before_anchor = line:sub(1, occ.col_start)
+    -- Check immediate vicinity
+    local start_pos = math.max(1, #before_anchor - #insert_text - 10)
+    local check_range = before_anchor:sub(start_pos)
+    if check_range:find(normalized_insert, 1, true) then
+      return true
+    end
+  end
+
+  return false
 end
 
 ---Select best match near cursor, excluding the cursor line (where user just edited)
@@ -264,16 +304,33 @@ local function _validate_response(response, buf, cursor_pos)
       return nil
     end
 
-    -- Select best match near cursor
-    local best = _select_best_match(occurrences, cursor_pos)
+    -- Filter out occurrences where insert text already exists
+    local pending_occurrences = {}
+    for _, occ in ipairs(occurrences) do
+      if not _already_inserted(occ, insert_text, position) then
+        table.insert(pending_occurrences, occ)
+      else
+        Log.debug("predictor: skipping line %d - insert text already present", occ.line)
+      end
+    end
+
+    if #pending_occurrences == 0 then
+      Log.debug("predictor: all %d occurrences already have insert text", #occurrences)
+      return nil
+    end
+
+    -- Select best match near cursor from remaining occurrences
+    local best = _select_best_match(pending_occurrences, cursor_pos)
     if not best then
       return nil
     end
 
     Log.debug(
-      "predictor: insert action - anchor found at line %d, position=%s",
+      "predictor: insert action - anchor found at line %d, position=%s (%d/%d pending)",
       best.line,
-      position
+      position,
+      #pending_occurrences,
+      #occurrences
     )
 
     -- For insert action, col_start/col_end mark the insertion point

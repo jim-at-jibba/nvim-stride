@@ -1,20 +1,16 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Configuration Options
+### Requirement: V2 Configuration Options
 
-The plugin SHALL provide configuration options for customizing behavior, including V2 features.
+The plugin SHALL provide configuration options for V2 next-edit prediction features.
 
-#### Scenario: Default configuration
+#### Scenario: Default configuration includes V2
 - **WHEN** user calls setup() without options
 - **THEN** defaults SHALL be applied including mode="completion"
 
-#### Scenario: Custom configuration
-- **WHEN** user provides options to setup()
+#### Scenario: Custom V2 configuration
+- **WHEN** user provides V2 options to setup()
 - **THEN** provided options SHALL override defaults
-
-#### Scenario: API key from environment
-- **WHEN** api_key is not provided
-- **THEN** CEREBRAS_API_KEY environment variable SHALL be used
 
 ## ADDED Requirements
 

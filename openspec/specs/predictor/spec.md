@@ -1,5 +1,8 @@
-## ADDED Requirements
+# predictor Specification
 
+## Purpose
+TBD - created by archiving change add-insertion-predictions. Update Purpose after archive.
+## Requirements
 ### Requirement: Insertion Action Support
 
 The predictor module SHALL support insertion predictions in addition to replacement predictions.
@@ -61,8 +64,6 @@ The predictor SHALL validate anchor text for insertion predictions.
 - **WHEN** anchor text appears multiple times in buffer
 - **THEN** predictor SHALL select occurrence closest to cursor (preferring after cursor)
 
-## MODIFIED Requirements
-
 ### Requirement: Next Edit Prediction
 
 The predictor module SHALL analyze recent edits and predict related changes needed elsewhere in the file, including both replacements and insertions.
@@ -84,3 +85,22 @@ The predictor module SHALL analyze recent edits and predict related changes need
 #### Scenario: Invalid response handling
 - **WHEN** LLM returns malformed JSON
 - **THEN** predictor SHALL return null suggestion without error
+
+### Requirement: Response Validation
+
+The predictor SHALL validate LLM responses before returning suggestions.
+
+#### Scenario: Line exists validation
+- **WHEN** LLM suggests edit on line N
+- **AND** line N does not exist in buffer
+- **THEN** suggestion SHALL be rejected
+
+#### Scenario: Original text validation
+- **WHEN** LLM suggests replacing "foo" on line N
+- **AND** line N does not contain "foo"
+- **THEN** suggestion SHALL be rejected
+
+#### Scenario: Self-edit rejection
+- **WHEN** LLM suggests edit on the same line user just edited
+- **THEN** suggestion SHALL be rejected (avoid circular suggestions)
+
