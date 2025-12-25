@@ -67,7 +67,7 @@ local function _trigger_refactor_prediction(buf, cursor_pos)
     end
 
     if Config.options.show_remote then
-      Ui.render_remote(suggestion, buf)
+      Ui.render_remote(suggestion, buf, 1, 1)
     end
   end)
 end

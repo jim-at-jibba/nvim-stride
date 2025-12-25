@@ -18,6 +18,26 @@ local Log = require("stride.log")
 local ns_id = vim.api.nvim_create_namespace("StrideGhost")
 local ns_id_remote = vim.api.nvim_create_namespace("StrideRemote")
 
+---Notify via fidget.nvim if available (optional integration)
+---@param current number Current edit index
+---@param total number Total pending edits
+local function _notify_fidget(current, total)
+  local ok, fidget = pcall(require, "fidget")
+  if not ok then
+    return
+  end
+
+  if total > 1 then
+    fidget.notify(
+      string.format("Edit %d/%d", current, total),
+      vim.log.levels.INFO,
+      { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 }
+    )
+  elseif total == 1 then
+    fidget.notify("1 edit suggested", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
+  end
+end
+
 ---@type Stride.Suggestion|nil
 M.current_suggestion = nil
 
@@ -205,7 +225,9 @@ end
 ---Render a remote suggestion (V2)
 ---@param suggestion Stride.RemoteSuggestion
 ---@param buf number Buffer handle
-function M.render_remote(suggestion, buf)
+---@param current? number Current edit index (1-based), for count display
+---@param total? number Total pending edits, for count display
+function M.render_remote(suggestion, buf, current, total)
   Log.debug("===== UI RENDER REMOTE =====")
   Log.debug("line=%d original='%s' new='%s'", suggestion.line, suggestion.original, suggestion.new)
 
@@ -237,8 +259,14 @@ function M.render_remote(suggestion, buf)
   end
 
   -- 2. Add inline virtual text showing the replacement (right after original)
+  -- Include count indicator if multiple edits pending
+  local suffix = ""
+  if total and total > 1 and current then
+    suffix = string.format(" [%d/%d]", current, total)
+  end
+
   local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_end, {
-    virt_text = { { " → " .. suggestion.new, "StrideRemoteSuggestion" } },
+    virt_text = { { " → " .. suggestion.new .. suffix, "StrideRemoteSuggestion" } },
     virt_text_pos = "inline",
   })
   if ok_virt then
@@ -264,6 +292,12 @@ function M.render_remote(suggestion, buf)
   }
 
   _setup_esc_mapping(buf)
+
+  -- Notify via fidget if available
+  if current and total then
+    _notify_fidget(current, total)
+  end
+
   Log.debug("SUCCESS: remote suggestion rendered for line %d", suggestion.line)
 end
 
