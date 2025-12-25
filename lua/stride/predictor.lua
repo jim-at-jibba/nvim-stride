@@ -269,8 +269,9 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
     return
   end
 
-  -- Get recent changes
-  local changes_text = History.get_changes_for_prompt(Config.options.token_budget)
+  -- Get recent changes for current file only
+  local file_path = _get_relative_path(buf)
+  local changes_text = History.get_changes_for_prompt(Config.options.token_budget, file_path)
   if changes_text == "(no recent changes)" then
     Log.debug("predictor: no recent changes to analyze")
     callback(nil)
@@ -283,7 +284,6 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
 
   -- Get buffer context centered on cursor
   local buffer_context, start_line, end_line = _get_buffer_context(buf, cursor_pos)
-  local file_path = _get_relative_path(buf)
 
   local user_prompt = string.format(
     [[Recent changes:

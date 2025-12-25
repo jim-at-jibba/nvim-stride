@@ -182,13 +182,24 @@ function M.get_ns_id()
   return ns_id
 end
 
----Setup highlight groups for remote suggestions
-function M.setup_highlights()
+---Define highlight groups (called on setup and colorscheme change)
+local function _define_highlights()
   -- StrideReplace: red foreground for text to be replaced
   vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff6b6b", strikethrough = true })
-  -- StrideRemoteSuggestion: cyan for replacement text
-  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#4ecdc4", italic = true })
-  Log.debug("ui.setup_highlights: highlight groups defined")
+  -- StrideRemoteSuggestion: green for replacement text
+  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#50fa7b", italic = true })
+  Log.debug("ui: highlight groups defined")
+end
+
+---Setup highlight groups for remote suggestions
+function M.setup_highlights()
+  _define_highlights()
+
+  -- Reapply highlights when colorscheme changes
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("StrideHighlights", { clear = true }),
+    callback = _define_highlights,
+  })
 end
 
 ---Render a remote suggestion (V2)
@@ -225,10 +236,10 @@ function M.render_remote(suggestion, buf)
     Log.debug("ERROR: failed to set remote highlight: %s", tostring(hl_id))
   end
 
-  -- 2. Add EOL virtual text showing the replacement
-  local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, 0, {
+  -- 2. Add inline virtual text showing the replacement (right after original)
+  local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_end, {
     virt_text = { { " → " .. suggestion.new, "StrideRemoteSuggestion" } },
-    virt_text_pos = "eol",
+    virt_text_pos = "inline",
   })
   if ok_virt then
     M.remote_virt_id = virt_id

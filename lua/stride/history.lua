@@ -74,6 +74,12 @@ function M.attach_buffer(buf)
     return
   end
 
+  -- Skip unnamed/scratch buffers
+  local bufname = vim.api.nvim_buf_get_name(buf)
+  if bufname == "" then
+    return
+  end
+
   -- Store initial state
   M._buffer_states[buf] = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
@@ -88,8 +94,10 @@ function M.attach_buffer(buf)
       local new_lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
 
       -- Extract the changed text from old and new states
-      local old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, old_end_col)
-      local new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, new_end_col)
+      -- on_bytes gives us: start position + length of old/new regions
+      -- For single-line changes: end_col is the length, so actual end = start_col + end_col
+      local old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
+      local new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
 
       -- Only record if there's actual text change
       if old_text ~= new_text then
@@ -179,8 +187,9 @@ end
 
 ---Get changes formatted for prompt, respecting token budget
 ---@param token_budget? number Max tokens (default from config)
+---@param file_filter? string Only include changes from this file
 ---@return string Formatted diff text
-function M.get_changes_for_prompt(token_budget)
+function M.get_changes_for_prompt(token_budget, file_filter)
   token_budget = token_budget or Config.options.token_budget or 1000
 
   local selected = {}
@@ -190,6 +199,11 @@ function M.get_changes_for_prompt(token_budget)
   -- Start from most recent and work backwards
   for i = #M._changes, 1, -1 do
     local change = M._changes[i]
+
+    -- Skip changes from other files if filter specified
+    if file_filter and change.file ~= file_filter then
+      goto continue
+    end
 
     -- Format as unified diff style
     local diff_text = M._format_change_as_diff(change)
@@ -201,6 +215,8 @@ function M.get_changes_for_prompt(token_budget)
 
     table.insert(selected, 1, diff_text) -- Prepend to maintain order
     char_count = char_count + diff_chars
+
+    ::continue::
   end
 
   if #selected == 0 then
