@@ -6,37 +6,33 @@ from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 
+# =============================================================================
+# REPLACE ACTION TESTS (existing functionality)
+# =============================================================================
+
 # -----------------------------------------------------------------------------
 # TEST 1: Variable rename propagation
-# 1. Change "user_name" to "username"
-# 2. Exit insert mode - stride predicts updating other "user_name" references
-# 3. Press Tab to accept
+# 1. Change "username" on line 18 to "user_name"
+# 2. Exit insert mode - stride predicts updating other references
+# 3. Press Tab to accept each suggestion
 # -----------------------------------------------------------------------------
 
-user_name = "alice"
-user_email = f"{user_name}@example.com"
-print(f"Hello, {user_name}!")
-print(f"Email: {user_email}")
-
-
-def greet_user(name: str) -> str:
-    return f"Welcome, {name}!"
-
-
-greeting = greet_user(user_name)
+username = "alice"
+user_email = f"{username}@example.com"
+print(f"Hello, {username}!")
+greeting = f"Welcome, {username}!"
 
 
 # -----------------------------------------------------------------------------
 # TEST 2: Function rename
-# 1. Rename "calculate_total" to "compute_total"
-# 2. Exit insert mode - stride suggests updating the call below
+# 1. Rename "calculate_total" to "compute_total" on line 33
+# 2. Exit insert mode - stride suggests updating the call on line 39
 # -----------------------------------------------------------------------------
 
 
 def calculate_total(items: list[float], tax_rate: float = 0.1) -> float:
     subtotal = sum(items)
-    tax = subtotal * tax_rate
-    return subtotal + tax
+    return subtotal + (subtotal * tax_rate)
 
 
 prices = [19.99, 29.99, 9.99]
@@ -44,63 +40,137 @@ total = calculate_total(prices)
 print(f"Total: ${total:.2f}")
 
 
+# =============================================================================
+# INSERT ACTION TESTS (new functionality)
+# =============================================================================
+
 # -----------------------------------------------------------------------------
-# TEST 3: Class attribute rename
-# 1. Change "is_active" to "is_enabled"
-# 2. Exit insert mode - stride suggests updating usages
+# TEST 3: Dataclass field insertion
+# HOW TO TEST:
+# 1. Add "age: int" after line 54 (after "email: str")
+# 2. Exit insert mode
+# 3. Stride should suggest INSERTING "age=25" after "email=email" on line 63
+# 4. Press Tab to accept - text is inserted, not replaced
+#
+# EXPECTED: Anchor="email=email", Position="after", Insert=", age=25"
 # -----------------------------------------------------------------------------
 
 
 @dataclass
-class User:
-    id: int
+class Person:
     name: str
     email: str
-    is_active: bool = True
-    created_at: Optional[datetime] = None
+    # <- ADD "age: int" HERE
 
 
-def create_user(name: str, email: str) -> User:
-    return User(
-        id=1,
-        name=name,
-        email=email,
-        is_active=True,
-        created_at=datetime.now(),
-    )
+def create_person(name: str, email: str) -> Person:
+    return Person(name=name, email=email)
 
 
-def deactivate_user(user: User) -> User:
-    user.is_active = False
-    return user
-
-
-def check_user_status(user: User) -> str:
-    if user.is_active:
-        return "User is active"
-    return "User is inactive"
+alice = create_person("Alice", "alice@example.com")
+bob = create_person("Bob", "bob@example.com")
 
 
 # -----------------------------------------------------------------------------
-# TEST 4: String constant rename
-# 1. Change "error" to "failed"
-# 2. Exit insert mode - stride suggests updating similar occurrences
+# TEST 4: Function parameter insertion
+# HOW TO TEST:
+# 1. Add "timeout: int = 30" parameter after "url: str" on line 79
+# 2. Exit insert mode
+# 3. Stride should suggest INSERTING ", timeout=30" at call sites
+# 4. Press Tab to accept each insertion
+#
+# EXPECTED: Anchor='"https://api.example.com/users"', Position="after", Insert=", timeout=30"
 # -----------------------------------------------------------------------------
 
 
-def process_request(data: dict) -> dict:
-    if not data:
-        return {"status": "error", "message": "No data provided"}
-
-    if "id" not in data:
-        return {"status": "error", "message": "Missing required field: id"}
-
-    # Process the data
-    result = {"status": "success", "data": data}
-    return result
+def fetch_data(url: str) -> dict:
+    """Fetch data from a URL."""
+    return {"url": url, "data": []}
 
 
-# Test the function
-response = process_request({})
-if response["status"] == "error":
-    print(f"Error: {response['message']}")
+# Call sites that need the new parameter inserted
+result1 = fetch_data("https://api.example.com/users")
+result2 = fetch_data("https://api.example.com/posts")
+result3 = fetch_data("https://api.example.com/comments")
+
+
+# -----------------------------------------------------------------------------
+# TEST 5: Dictionary key insertion
+# HOW TO TEST:
+# 1. Add '"status": "active",' after '"email": email,' on line 103
+# 2. Exit insert mode
+# 3. Stride should suggest inserting same key in other dicts
+#
+# EXPECTED: Anchor='"email": user["email"]', Position="after", Insert=', "status": "active"'
+# -----------------------------------------------------------------------------
+
+
+def format_user(user: dict) -> dict:
+    return {
+        "name": user["name"],
+        "email": user["email"],
+        # <- ADD '"status": "active",' HERE
+    }
+
+
+def format_admin(user: dict) -> dict:
+    return {
+        "name": user["name"],
+        "email": user["email"],
+    }
+
+
+# -----------------------------------------------------------------------------
+# TEST 6: Import insertion
+# HOW TO TEST:
+# 1. Add "from typing import List" after "from typing import Optional" (line 7)
+# 2. Exit insert mode
+# 3. Stride may suggest similar import insertions if pattern matches
+# -----------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------------
+# TEST 7: Decorator insertion
+# HOW TO TEST:
+# 1. Add "@property" decorator before "def name(self)" on line 140
+# 2. Exit insert mode
+# 3. Stride should suggest inserting @property before similar methods
+#
+# EXPECTED: Anchor="def email", Position="before", Insert="    @property\n"
+# -----------------------------------------------------------------------------
+
+
+class User:
+    def __init__(self, name: str, email: str):
+        self._name = name
+        self._email = email
+
+    def name(self) -> str:
+        return self._name
+
+    def email(self) -> str:
+        return self._email
+
+
+# -----------------------------------------------------------------------------
+# TEST 8: List item insertion
+# HOW TO TEST:
+# 1. Add '"debug",' after '"warning",' on line 157
+# 2. Exit insert mode
+# 3. Stride should suggest inserting in similar lists
+#
+# EXPECTED: Anchor='"warning"', Position="after", Insert=', "debug"'
+# -----------------------------------------------------------------------------
+
+LOG_LEVELS = [
+    "error",
+    "warning",
+    # <- ADD '"debug",' HERE
+    "info",
+]
+
+ALERT_LEVELS = [
+    "critical",
+    "warning",
+    "info",
+]
