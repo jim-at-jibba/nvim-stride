@@ -1,5 +1,8 @@
 local M = {}
 
+---@type boolean Global enabled state
+M.enabled = true
+
 local Config = require("stride.config")
 local Utils = require("stride.utils")
 local Client = require("stride.client")
@@ -11,6 +14,9 @@ local Predictor = require("stride.predictor")
 ---Check if current filetype is disabled
 ---@return boolean
 local function _is_disabled()
+  if not M.enabled then
+    return true
+  end
   local ft = vim.bo.filetype
   for _, disabled_ft in ipairs(Config.options.disabled_filetypes or {}) do
     if ft == disabled_ft then
@@ -217,6 +223,23 @@ function M.setup(opts)
     Log.debug(":StrideClear executed")
     vim.notify("Stride: cleared change history and suggestions", vim.log.levels.INFO)
   end, { desc = "Clear Stride change history and suggestions" })
+
+  -- Create :StrideEnable command
+  vim.api.nvim_create_user_command("StrideEnable", function()
+    M.enabled = true
+    Log.debug(":StrideEnable executed")
+    vim.notify("Stride: enabled", vim.log.levels.INFO)
+  end, { desc = "Enable Stride predictions" })
+
+  -- Create :StrideDisable command
+  vim.api.nvim_create_user_command("StrideDisable", function()
+    M.enabled = false
+    Ui.clear()
+    Predictor.cancel()
+    Client.cancel()
+    Log.debug(":StrideDisable executed")
+    vim.notify("Stride: disabled", vim.log.levels.INFO)
+  end, { desc = "Disable Stride predictions" })
 
   Log.debug(
     "setup complete, keymap=%s, debounce=%dms, mode=%s",

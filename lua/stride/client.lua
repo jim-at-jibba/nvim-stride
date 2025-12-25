@@ -71,7 +71,7 @@ local function _is_echo_response(response, prefix, suffix)
       return true
     end
   end
-  
+
   -- Check if response contains first 30 chars of suffix
   if #suffix >= 30 then
     local suffix_head = suffix:sub(1, 30)
@@ -79,7 +79,7 @@ local function _is_echo_response(response, prefix, suffix)
       return true
     end
   end
-  
+
   return false
 end
 
@@ -106,7 +106,7 @@ local function _do_fetch(context, callback, attempt)
   -- Truncate context for the prompt (keep full context for echo detection)
   local prompt_prefix = _truncate_end(context.prefix, 30)
   local prompt_suffix = _truncate_start(context.suffix, 15)
-  
+
   -- Store for echo detection
   M._last_prefix = context.prefix
 
@@ -188,7 +188,11 @@ Output only the completion text.]],
 
       -- Network/server error (5xx) - retry with exponential backoff
       if not out or out.status >= 500 then
-        Log.debug("SERVER ERROR: status=%s, will retry=%s", tostring(out and out.status), tostring(attempt < max_retries))
+        Log.debug(
+          "SERVER ERROR: status=%s, will retry=%s",
+          tostring(out and out.status),
+          tostring(attempt < max_retries)
+        )
         if out and out.body then
           Log.debug("error body: %s", out.body)
         end
@@ -234,7 +238,13 @@ Output only the completion text.]],
       local cur = vim.api.nvim_win_get_cursor(0)
       local r, c = cur[1] - 1, cur[2]
       if M.active_request_cursor[1] ~= r or M.active_request_cursor[2] ~= c then
-        Log.debug("DISCARDED: cursor moved (was=%d,%d now=%d,%d)", M.active_request_cursor[1], M.active_request_cursor[2], r, c)
+        Log.debug(
+          "DISCARDED: cursor moved (was=%d,%d now=%d,%d)",
+          M.active_request_cursor[1],
+          M.active_request_cursor[2],
+          r,
+          c
+        )
         return
       end
 
@@ -263,7 +273,7 @@ Output only the completion text.]],
       local cleaned = content
       cleaned = cleaned:gsub("^%s*```[%w]*%s*\n?", "")
       cleaned = cleaned:gsub("\n?%s*```%s*$", "")
-      
+
       if cleaned ~= content then
         Log.debug("stripped markdown fences, cleaned:\n%s", cleaned)
         content = cleaned
@@ -279,10 +289,12 @@ Output only the completion text.]],
       end
 
       if decoded.usage then
-        Log.debug("usage: prompt_tokens=%d completion_tokens=%d total=%d",
+        Log.debug(
+          "usage: prompt_tokens=%d completion_tokens=%d total=%d",
           decoded.usage.prompt_tokens or 0,
           decoded.usage.completion_tokens or 0,
-          decoded.usage.total_tokens or 0)
+          decoded.usage.total_tokens or 0
+        )
       end
 
       Log.debug("===== CALLING UI RENDER =====")
