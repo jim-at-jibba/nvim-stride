@@ -24,6 +24,7 @@ Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using t
 ### Core
 - Automatic race condition handling
 - Configurable debounce and filetypes
+- **`:StrideEnable` / `:StrideDisable`**: Toggle predictions globally
 
 ## Requirements
 
@@ -89,7 +90,7 @@ require("stride").setup({
   -- API Configuration
   api_key = os.getenv("CEREBRAS_API_KEY"),
   endpoint = "https://api.cerebras.ai/v1/chat/completions",
-  model = "llama3.1-70b",
+  model = "gpt-oss-120b",  -- Default model
 
   -- UX Settings
   debounce_ms = 300,        -- Wait time before triggering prediction
@@ -135,6 +136,11 @@ require("stride").setup({
 5. Press `<Tab>` to accept the edit
 6. Press `<Esc>` to dismiss and continue editing
 7. Use `:StrideClear` to reset tracked changes
+
+### Global Toggle
+
+- `:StrideEnable` — Enable predictions globally
+- `:StrideDisable` — Disable predictions, clear UI, cancel pending requests
 
 ### With blink.cmp
 
@@ -198,6 +204,14 @@ lua/
     ├── predictor.lua # Next-edit prediction (V2)
     └── log.lua       # Debug logging
 ```
+
+## Roadmap
+
+- [ ] LSP integration (diagnostics, symbols, go-to-definition context)
+- [ ] Treesitter integration (semantic context, scope-aware predictions)
+- [ ] Multi-file context awareness
+- [ ] Custom prompt templates
+- [ ] Prediction caching
 
 ## Development
 
