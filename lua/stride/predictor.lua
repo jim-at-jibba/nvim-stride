@@ -120,7 +120,7 @@ local function _find_all_occurrences(buf, find_text)
   return occurrences
 end
 
----Select best match near cursor
+---Select best match near cursor, excluding the cursor line (where user just edited)
 ---@param occurrences {line: number, col_start: number, col_end: number}[]
 ---@param cursor_pos Stride.CursorPos
 ---@return {line: number, col_start: number, col_end: number}|nil
@@ -129,20 +129,34 @@ local function _select_best_match(occurrences, cursor_pos)
     return nil
   end
 
-  if #occurrences == 1 then
-    return occurrences[1]
+  -- Filter out occurrences on cursor line (user just edited there)
+  local remote_occurrences = {}
+  for _, occ in ipairs(occurrences) do
+    if occ.line ~= cursor_pos.line then
+      table.insert(remote_occurrences, occ)
+    end
   end
 
-  -- Priority: cursor line > after cursor > before cursor
+  -- If all occurrences are on cursor line, no remote suggestion
+  if #remote_occurrences == 0 then
+    Log.debug("predictor: all %d occurrences on cursor line, skipping", #occurrences)
+    return nil
+  end
+
+  if #remote_occurrences == 1 then
+    return remote_occurrences[1]
+  end
+
+  -- Priority: after cursor > before cursor
   -- Within same priority: closest to cursor wins
   local best = nil
   local best_distance = math.huge
 
-  for _, occ in ipairs(occurrences) do
+  for _, occ in ipairs(remote_occurrences) do
     local distance = math.abs(occ.line - cursor_pos.line)
 
     -- Prefer matches after cursor over before
-    if occ.line >= cursor_pos.line then
+    if occ.line > cursor_pos.line then
       distance = distance * 0.9 -- Slight preference for after
     end
 
@@ -209,26 +223,37 @@ Rules:
 - Return ONLY valid JSON, no markdown
 - Format: {"find": "text_to_find", "replace": "replacement_text"}
 - Remove │ from find and replace text
-- The "find" text must exist in the current context
+- The "find" text MUST be a complete identifier, word, or expression - never a partial match
+- The "find" text must exist EXACTLY in the current context (not on the cursor line)
 - If no prediction is possible: {"find": null, "replace": null}
-- Predict any likely edit, not just renames
+- Predict the NEXT edit the user will make, not the edit they just made
+
+IMPORTANT - Infer the original value:
+- Recent changes may show incremental keystrokes, not the full edit
+- Look at the cursor line to see the NEW value after editing
+- Find OTHER occurrences in the context that still have the OLD value
+- The "find" should match those old occurrences exactly
 
 Examples:
 
-Recent changes show function signature change:
-- function myFunction(a: string, b: number) {
-+ function myFunction({a, b}: {a: string, b: number}) {
-Context has: myFunction("hello", 2)
-Prediction: {"find": "myFunction(\"hello\", 2)", "replace": "myFunction({a: \"hello\", b: 2})"}
+Variable rename (incremental changes show typing, but cursor line shows result):
+Recent changes: typing on line 10
+Current context line 10: local config│ = {
+Context line 20: print(configTest1)
+Analysis: User changed "configTest1" to "config" on line 10. Line 20 still has old value.
+Prediction: {"find": "configTest1", "replace": "config"}
 
-Recent changes show variable rename:
-- const apple = "fruit"
-+ const orange = "fruit"
-Context has: console.log(apple)
-Prediction: {"find": "apple", "replace": "orange"}
+Function rename:
+Recent changes: edits on line 5
+Current context line 5: function getUser│() {
+Context line 15: const u = getUserData()
+Analysis: User renamed "getUserData" to "getUser". Line 15 still has old name.
+Prediction: {"find": "getUserData", "replace": "getUser"}
 
-User typing console.log and cursor at console│
-Prediction: {"find": "console\n", "replace": "console.log();\n"}
+No prediction needed (all occurrences already updated):
+Recent changes: edits on line 10
+Current context shows all occurrences are already "config"
+Prediction: {"find": null, "replace": null}
 ]]
 
 ---Fetch next-edit prediction from LLM
