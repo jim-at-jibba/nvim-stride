@@ -1,10 +1,14 @@
 ---@class Stride.RemoteSuggestion
 ---@field line number 1-indexed target line
----@field original string Text to replace (the "find" text)
----@field new string Replacement text
+---@field original string Text to replace (the "find" text) - for replace action
+---@field new string Replacement text - for replace action
 ---@field col_start number 0-indexed column start
 ---@field col_end number 0-indexed column end
 ---@field is_remote boolean Always true for remote suggestions
+---@field action "replace"|"insert" Action type (default: "replace")
+---@field anchor? string Anchor text for insertion (insert action only)
+---@field position? "after"|"before" Insert position relative to anchor (insert action only)
+---@field insert? string Text to insert (insert action only)
 
 ---@class Stride.CursorPos
 ---@field line number 1-indexed line
@@ -169,51 +173,133 @@ local function _select_best_match(occurrences, cursor_pos)
   return best
 end
 
----Validate LLM response (find/replace format)
+---Validate LLM response (supports both replace and insert actions)
 ---@param response table Parsed JSON response
 ---@param buf number Buffer handle
 ---@param cursor_pos Stride.CursorPos
 ---@return Stride.RemoteSuggestion|nil
 local function _validate_response(response, buf, cursor_pos)
+  -- Determine action type with backward compatibility
+  local action = response.action
+  if action == vim.NIL then
+    action = nil
+  end
+
+  -- Backward compat: if no action field but find/replace present, treat as replace
+  if not action and response.find and response.find ~= vim.NIL then
+    action = "replace"
+  end
+
   -- Check for null/no suggestion
-  if not response.find or response.find == vim.NIL then
-    Log.debug("predictor: LLM returned no suggestion")
+  if not action then
+    Log.debug("predictor: LLM returned no suggestion (action=null)")
     return nil
   end
 
-  if not response.replace then
-    Log.debug("predictor: missing replace text")
+  if action == "replace" then
+    -- REPLACE action: find text and replace it
+    if not response.find or response.find == vim.NIL then
+      Log.debug("predictor: replace action missing 'find' field")
+      return nil
+    end
+    if not response.replace then
+      Log.debug("predictor: replace action missing 'replace' field")
+      return nil
+    end
+
+    -- Remove cursor marker if present
+    local find_text = response.find:gsub("│", "")
+    local replace_text = response.replace:gsub("│", "")
+
+    -- Find all occurrences
+    local occurrences = _find_all_occurrences(buf, find_text)
+
+    if #occurrences == 0 then
+      Log.debug("predictor: find text '%s' not found in buffer", find_text)
+      return nil
+    end
+
+    -- Select best match near cursor
+    local best = _select_best_match(occurrences, cursor_pos)
+    if not best then
+      return nil
+    end
+
+    Log.debug("predictor: replace action - found %d occurrences, selected line %d", #occurrences, best.line)
+
+    return {
+      line = best.line,
+      original = find_text,
+      new = replace_text,
+      col_start = best.col_start,
+      col_end = best.col_end,
+      is_remote = true,
+      action = "replace",
+    }
+  elseif action == "insert" then
+    -- INSERT action: find anchor and insert text relative to it
+    if not response.anchor or response.anchor == vim.NIL then
+      Log.debug("predictor: insert action missing 'anchor' field")
+      return nil
+    end
+    if not response.insert or response.insert == vim.NIL then
+      Log.debug("predictor: insert action missing 'insert' field")
+      return nil
+    end
+
+    local position = response.position
+    if position ~= "after" and position ~= "before" then
+      position = "after" -- Default to after
+    end
+
+    -- Remove cursor marker if present
+    local anchor_text = response.anchor:gsub("│", "")
+    local insert_text = response.insert:gsub("│", "")
+
+    -- Find all occurrences of anchor
+    local occurrences = _find_all_occurrences(buf, anchor_text)
+
+    if #occurrences == 0 then
+      Log.debug("predictor: anchor text '%s' not found in buffer", anchor_text)
+      return nil
+    end
+
+    -- Select best match near cursor
+    local best = _select_best_match(occurrences, cursor_pos)
+    if not best then
+      return nil
+    end
+
+    Log.debug(
+      "predictor: insert action - anchor found at line %d, position=%s",
+      best.line,
+      position
+    )
+
+    -- For insert action, col_start/col_end mark the insertion point
+    local insert_col
+    if position == "after" then
+      insert_col = best.col_end -- Insert after anchor
+    else
+      insert_col = best.col_start -- Insert before anchor
+    end
+
+    return {
+      line = best.line,
+      original = anchor_text, -- Store anchor for reference
+      new = insert_text, -- The text to insert
+      col_start = insert_col, -- Insertion point
+      col_end = insert_col, -- Same as col_start (no text to replace)
+      is_remote = true,
+      action = "insert",
+      anchor = anchor_text,
+      position = position,
+      insert = insert_text,
+    }
+  else
+    Log.debug("predictor: unknown action type '%s'", tostring(action))
     return nil
   end
-
-  -- Remove cursor marker if present
-  local find_text = response.find:gsub("│", "")
-  local replace_text = response.replace:gsub("│", "")
-
-  -- Find all occurrences
-  local occurrences = _find_all_occurrences(buf, find_text)
-
-  if #occurrences == 0 then
-    Log.debug("predictor: find text '%s' not found in buffer", find_text)
-    return nil
-  end
-
-  -- Select best match near cursor
-  local best = _select_best_match(occurrences, cursor_pos)
-  if not best then
-    return nil
-  end
-
-  Log.debug("predictor: found %d occurrences, selected line %d", #occurrences, best.line)
-
-  return {
-    line = best.line,
-    original = find_text,
-    new = replace_text,
-    col_start = best.col_start,
-    col_end = best.col_end,
-    is_remote = true,
-  }
 end
 
 ---System prompt for general next-edit prediction (magenta-style)
@@ -221,12 +307,18 @@ local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent chang
 
 Rules:
 - Return ONLY valid JSON, no markdown
-- Format: {"find": "text_to_find", "replace": "replacement_text"}
-- Remove │ from find and replace text
-- The "find" text MUST be a complete identifier, word, or expression - never a partial match
-- The "find" text must exist EXACTLY in the current context (not on the cursor line)
-- If no prediction is possible: {"find": null, "replace": null}
+- Two action types supported:
+  1. Replace: {"action": "replace", "find": "text_to_find", "replace": "replacement_text"}
+  2. Insert: {"action": "insert", "anchor": "text_to_find", "position": "after"|"before", "insert": "text_to_insert"}
+- Remove │ from all text fields
+- The "find" or "anchor" text MUST be a complete identifier, word, or expression - never a partial match
+- The "find" or "anchor" text must exist EXACTLY in the current context (not on the cursor line)
+- If no prediction is possible: {"action": null}
 - Predict the NEXT edit the user will make, not the edit they just made
+
+IMPORTANT - When to use each action:
+- Use "replace" when existing text needs to change (e.g., rename variable)
+- Use "insert" when NEW text needs to be added (e.g., new parameter, new property)
 
 IMPORTANT - Infer the original value:
 - Recent changes may show incremental keystrokes, not the full edit
@@ -236,24 +328,31 @@ IMPORTANT - Infer the original value:
 
 Examples:
 
-Variable rename (incremental changes show typing, but cursor line shows result):
+Variable rename (replace):
 Recent changes: typing on line 10
 Current context line 10: local config│ = {
 Context line 20: print(configTest1)
 Analysis: User changed "configTest1" to "config" on line 10. Line 20 still has old value.
-Prediction: {"find": "configTest1", "replace": "config"}
+Prediction: {"action": "replace", "find": "configTest1", "replace": "config"}
 
-Function rename:
-Recent changes: edits on line 5
-Current context line 5: function getUser│() {
-Context line 15: const u = getUserData()
-Analysis: User renamed "getUserData" to "getUser". Line 15 still has old name.
-Prediction: {"find": "getUserData", "replace": "getUser"}
+Add property to dataclass (insert):
+Recent changes: added "age: int" on line 58
+Current context line 58: age: int│
+Context line 65: User(id=1, name=name, email=email)
+Analysis: User added new "age" field to dataclass. Constructor call needs age parameter.
+Prediction: {"action": "insert", "anchor": "email=email", "position": "after", "insert": ", age=0"}
 
-No prediction needed (all occurrences already updated):
+Add function parameter (insert):
+Recent changes: added "timeout: int" parameter on line 5
+Current context line 5: def fetch(url: str, timeout: int│):
+Context line 20: result = fetch("https://api.example.com")
+Analysis: User added timeout parameter. Call site needs the argument.
+Prediction: {"action": "insert", "anchor": "\"https://api.example.com\"", "position": "after", "insert": ", timeout=30"}
+
+No prediction needed:
 Recent changes: edits on line 10
-Current context shows all occurrences are already "config"
-Prediction: {"find": null, "replace": null}
+Current context shows all occurrences are already updated
+Prediction: {"action": null}
 ]]
 
 ---Fetch next-edit prediction from LLM

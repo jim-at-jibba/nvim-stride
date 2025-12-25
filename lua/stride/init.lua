@@ -241,23 +241,49 @@ function M.accept()
 
   if is_remote then
     -- V2: Remote suggestion - jump and apply
-    Log.debug("accept: remote suggestion at line %d", s.target_line)
+    local action = s.action or "replace"
+    Log.debug("accept: remote %s suggestion at line %d", action, s.target_line)
 
     local target_line = s.target_line
     local col_start = s.col_start
     local col_end = s.col_end
-    local new_text = s.new
 
     Ui.clear()
 
     vim.schedule(function()
-      -- Apply the replacement
-      vim.api.nvim_buf_set_text(buf, target_line - 1, col_start, target_line - 1, col_end, { new_text })
+      if action == "insert" then
+        -- INSERT action: insert text at the insertion point
+        local insert_text = s.insert or s.new
+        local insert_lines = vim.split(insert_text, "\n")
 
-      -- Jump cursor to the target line
-      vim.api.nvim_win_set_cursor(0, { target_line, col_start })
+        -- For single-line insert, just insert at position
+        if #insert_lines == 1 then
+          vim.api.nvim_buf_set_text(buf, target_line - 1, col_start, target_line - 1, col_start, { insert_text })
+        else
+          -- Multi-line insert: first line at position, rest as new lines
+          vim.api.nvim_buf_set_text(buf, target_line - 1, col_start, target_line - 1, col_start, { insert_lines[1] })
+          if #insert_lines > 1 then
+            local extra = { unpack(insert_lines, 2) }
+            vim.api.nvim_buf_set_lines(buf, target_line, target_line, false, extra)
+          end
+        end
 
-      Log.debug("accept: applied remote edit and jumped to line %d", target_line)
+        -- Jump cursor to end of inserted text
+        local final_line = target_line + #insert_lines - 1
+        local final_col = (#insert_lines == 1) and (col_start + #insert_text) or #insert_lines[#insert_lines]
+        vim.api.nvim_win_set_cursor(0, { final_line, final_col })
+
+        Log.debug("accept: inserted text at line %d", target_line)
+      else
+        -- REPLACE action: replace existing text
+        local new_text = s.new
+        vim.api.nvim_buf_set_text(buf, target_line - 1, col_start, target_line - 1, col_end, { new_text })
+
+        -- Jump cursor to the target line
+        vim.api.nvim_win_set_cursor(0, { target_line, col_start })
+
+        Log.debug("accept: applied replacement at line %d", target_line)
+      end
 
       -- Auto-trigger next prediction after accepting (chain edits)
       if _mode_has_refactor() then

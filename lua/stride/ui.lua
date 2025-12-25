@@ -10,6 +10,10 @@
 ---@field new? string Replacement text (remote only)
 ---@field col_start? number 0-indexed column start (remote only)
 ---@field col_end? number 0-indexed column end (remote only)
+---@field action? "replace"|"insert" Action type for remote suggestions
+---@field anchor? string Anchor text for insertion (insert action only)
+---@field position? "after"|"before" Insert position relative to anchor (insert action only)
+---@field insert? string Text to insert (insert action only)
 
 local M = {}
 
@@ -208,6 +212,8 @@ local function _define_highlights()
   vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff6b6b", strikethrough = true })
   -- StrideRemoteSuggestion: green for replacement text
   vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#50fa7b", italic = true })
+  -- StrideInsert: green/italic for insertion point marker
+  vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
   Log.debug("ui: highlight groups defined")
 end
 
@@ -222,14 +228,15 @@ function M.setup_highlights()
   })
 end
 
----Render a remote suggestion (V2)
+---Render a remote suggestion (V2) - supports both replace and insert actions
 ---@param suggestion Stride.RemoteSuggestion
 ---@param buf number Buffer handle
 ---@param current? number Current edit index (1-based), for count display
 ---@param total? number Total pending edits, for count display
 function M.render_remote(suggestion, buf, current, total)
+  local action = suggestion.action or "replace"
   Log.debug("===== UI RENDER REMOTE =====")
-  Log.debug("line=%d original='%s' new='%s'", suggestion.line, suggestion.original, suggestion.new)
+  Log.debug("action=%s line=%d", action, suggestion.line)
 
   M.clear()
 
@@ -246,34 +253,87 @@ function M.render_remote(suggestion, buf, current, total)
 
   local row = suggestion.line - 1 -- Convert to 0-indexed
 
-  -- 1. Highlight the original text with StrideReplace
-  local ok_hl, hl_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_start, {
-    end_col = suggestion.col_end,
-    hl_group = "StrideReplace",
-  })
-  if ok_hl then
-    M.remote_hl_id = hl_id
-    Log.debug("remote highlight extmark=%d", hl_id)
-  else
-    Log.debug("ERROR: failed to set remote highlight: %s", tostring(hl_id))
-  end
-
-  -- 2. Add inline virtual text showing the replacement (right after original)
   -- Include count indicator if multiple edits pending
   local suffix = ""
   if total and total > 1 and current then
     suffix = string.format(" [%d/%d]", current, total)
   end
 
-  local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_end, {
-    virt_text = { { " → " .. suggestion.new .. suffix, "StrideRemoteSuggestion" } },
-    virt_text_pos = "inline",
-  })
-  if ok_virt then
-    M.remote_virt_id = virt_id
-    Log.debug("remote virt_text extmark=%d", virt_id)
+  if action == "insert" then
+    -- INSERT action: mark insertion point and show preview
+    Log.debug("insert: anchor='%s' position=%s insert='%s'", suggestion.anchor, suggestion.position, suggestion.insert)
+
+    -- 1. Highlight the anchor text with StrideInsert (to show context)
+    local anchor_start = suggestion.col_start
+    local anchor_end = suggestion.col_end
+    if suggestion.position == "after" then
+      -- col_start/col_end is the insertion point (after anchor)
+      -- We need to find anchor start for highlighting
+      anchor_start = suggestion.col_start - #suggestion.anchor
+      anchor_end = suggestion.col_start
+    else
+      -- position == "before": insertion point is at anchor start
+      anchor_end = suggestion.col_start + #suggestion.anchor
+    end
+
+    -- Clamp to valid range
+    anchor_start = math.max(0, anchor_start)
+
+    local ok_hl, hl_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, anchor_start, {
+      end_col = anchor_end,
+      hl_group = "StrideInsert",
+    })
+    if ok_hl then
+      M.remote_hl_id = hl_id
+      Log.debug("insert highlight extmark=%d", hl_id)
+    end
+
+    -- 2. Show insertion preview as virtual text at insertion point
+    local insert_text = suggestion.insert or suggestion.new
+    local virt_col = suggestion.col_start
+
+    -- Handle multi-line insertions
+    local insert_lines = vim.split(insert_text, "\n")
+    local preview_text = insert_lines[1]
+    if #insert_lines > 1 then
+      preview_text = preview_text .. " (+" .. (#insert_lines - 1) .. " lines)"
+    end
+
+    local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, virt_col, {
+      virt_text = { { " ← " .. preview_text .. suffix, "StrideRemoteSuggestion" } },
+      virt_text_pos = "inline",
+    })
+    if ok_virt then
+      M.remote_virt_id = virt_id
+      Log.debug("insert virt_text extmark=%d", virt_id)
+    end
   else
-    Log.debug("ERROR: failed to set remote virt_text: %s", tostring(virt_id))
+    -- REPLACE action: highlight original and show replacement
+    Log.debug("replace: original='%s' new='%s'", suggestion.original, suggestion.new)
+
+    -- 1. Highlight the original text with StrideReplace
+    local ok_hl, hl_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_start, {
+      end_col = suggestion.col_end,
+      hl_group = "StrideReplace",
+    })
+    if ok_hl then
+      M.remote_hl_id = hl_id
+      Log.debug("remote highlight extmark=%d", hl_id)
+    else
+      Log.debug("ERROR: failed to set remote highlight: %s", tostring(hl_id))
+    end
+
+    -- 2. Add inline virtual text showing the replacement (right after original)
+    local ok_virt, virt_id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id_remote, row, suggestion.col_end, {
+      virt_text = { { " → " .. suggestion.new .. suffix, "StrideRemoteSuggestion" } },
+      virt_text_pos = "inline",
+    })
+    if ok_virt then
+      M.remote_virt_id = virt_id
+      Log.debug("remote virt_text extmark=%d", virt_id)
+    else
+      Log.debug("ERROR: failed to set remote virt_text: %s", tostring(virt_id))
+    end
   end
 
   M.current_buf = buf
@@ -281,7 +341,7 @@ function M.render_remote(suggestion, buf, current, total)
     text = suggestion.new,
     row = row,
     col = suggestion.col_start,
-    lines = { suggestion.new },
+    lines = vim.split(suggestion.new, "\n"),
     buf = buf,
     is_remote = true,
     target_line = suggestion.line,
@@ -289,6 +349,10 @@ function M.render_remote(suggestion, buf, current, total)
     new = suggestion.new,
     col_start = suggestion.col_start,
     col_end = suggestion.col_end,
+    action = action,
+    anchor = suggestion.anchor,
+    position = suggestion.position,
+    insert = suggestion.insert,
   }
 
   _setup_esc_mapping(buf)
@@ -298,7 +362,7 @@ function M.render_remote(suggestion, buf, current, total)
     _notify_fidget(current, total)
   end
 
-  Log.debug("SUCCESS: remote suggestion rendered for line %d", suggestion.line)
+  Log.debug("SUCCESS: remote %s suggestion rendered for line %d", action, suggestion.line)
 end
 
 ---Get remote namespace ID (for testing)
