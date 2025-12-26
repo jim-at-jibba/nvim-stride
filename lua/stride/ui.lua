@@ -130,7 +130,7 @@ end
 function M.render(text, row, col, buf)
   Log.debug("===== UI RENDER CALLED =====")
   Log.debug("row=%d col=%d buf=%d", row, col, buf)
-  
+
   M.clear()
   if not text or text == "" then
     Log.debug("SKIP: empty/nil text received")
