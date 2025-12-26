@@ -126,7 +126,14 @@ function M.get_context(base_context_lines)
   table.insert(prefix_lines, prefix_part)
   table.insert(suffix_lines, 1, suffix_part)
 
-  Log.debug("get_context: row=%d col=%d prefix=%d chars suffix=%d chars ft=%s", row, col, #table.concat(prefix_lines, "\n"), #table.concat(suffix_lines, "\n"), vim.bo[buf].filetype)
+  Log.debug(
+    "get_context: row=%d col=%d prefix=%d chars suffix=%d chars ft=%s",
+    row,
+    col,
+    #table.concat(prefix_lines, "\n"),
+    #table.concat(suffix_lines, "\n"),
+    vim.bo[buf].filetype
+  )
 
   return {
     prefix = table.concat(prefix_lines, "\n"),
