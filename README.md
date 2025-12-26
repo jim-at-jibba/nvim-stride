@@ -7,13 +7,13 @@ Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using t
 
 ## Features
 
-### V1: Completion Mode (default)
+### Completion Mode (default)
 - Real-time code completion suggestions as you type
 - Treesitter-aware context capture for smarter completions
 - Multi-line ghost text rendering
 - Tab to accept suggestions
 
-### V2: Refactor Mode
+### Refactor Mode
 - **Next-edit prediction**: Rename `apple` to `orange` on line 1, and stride suggests updating line 20
 - **Automatic trigger**: Predictions fire on `InsertLeave` after edits
 - **Remote suggestions**: Highlights target text (strikethrough) with replacement shown at end of line
@@ -101,11 +101,11 @@ require("stride").setup({
   use_treesitter = true,    -- Use Treesitter for smart context expansion
   disabled_filetypes = {},  -- Filetypes to disable (e.g., {"markdown", "text"})
 
-  -- Mode Selection (V1/V2)
-  mode = "completion",      -- "completion" (V1), "refactor" (V2), or "both"
+  -- Mode Selection
+  mode = "completion",      -- "completion", "refactor", or "both"
   show_remote = true,       -- Show remote suggestions in refactor mode
 
-  -- V2: Refactor Mode Settings
+  -- Refactor Mode Settings
   max_tracked_changes = 10, -- Max edits to track in history
   token_budget = 1000,      -- Max tokens for change history in prompt
   small_file_threshold = 200, -- Files <= this many lines send whole content
@@ -114,14 +114,14 @@ require("stride").setup({
 
 ## Usage
 
-### Completion Mode (V1 - default)
+### Completion Mode (default)
 
 1. Start typing in insert mode
 2. After a brief pause (300ms default), a ghost text suggestion appears
 3. Press `<Tab>` to accept the suggestion
 4. Press any other key to dismiss and continue typing
 
-### Refactor Mode (V2)
+### Refactor Mode
 
 1. Enable refactor mode:
    ```lua
@@ -176,13 +176,13 @@ require("stride").setup({
 
 ## How It Works
 
-### V1: Completion Mode
+### Completion Mode
 1. **Debounced Trigger**: After you stop typing for 300ms, a prediction is requested
 2. **Smart Context**: Uses Treesitter to capture full function/class definitions in context
 3. **Ghost Text**: Suggestions appear as dimmed text after your cursor
 4. **Race Protection**: Stale responses are discarded if you've moved the cursor
 
-### V2: Refactor Mode
+### Refactor Mode
 1. **Incremental Tracking**: Edits tracked in real-time via `nvim_buf_attach` with `on_bytes` callback
 2. **InsertLeave Trigger**: On leaving insert mode, stride analyzes recent edits
 3. **Next-Edit Prediction**: LLM predicts related changes based on your edit patterns
@@ -198,10 +198,10 @@ lua/
     ├── init.lua      # Public API, setup(), autocmds
     ├── config.lua    # User defaults, options merging
     ├── utils.lua     # Context extraction, Treesitter expansion
-    ├── client.lua    # Cerebras API integration (V1 completion)
+    ├── client.lua    # Cerebras API integration (completion)
     ├── ui.lua        # Ghost text rendering (local + remote)
-    ├── history.lua   # Buffer snapshots, diff computation (V2)
-    ├── predictor.lua # Next-edit prediction (V2)
+    ├── history.lua   # Buffer snapshots, diff computation
+    ├── predictor.lua # Next-edit prediction
     └── log.lua       # Debug logging
 ```
 
