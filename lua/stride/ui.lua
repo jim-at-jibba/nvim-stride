@@ -207,13 +207,14 @@ function M.get_ns_id()
 end
 
 ---Define highlight groups (called on setup and colorscheme change)
+---Uses default=true so users can override these in their config
 local function _define_highlights()
   -- StrideReplace: red foreground for text to be replaced
-  vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff6b6b", strikethrough = true })
+  vim.api.nvim_set_hl(0, "StrideReplace", { default = true, fg = "#ff6b6b", strikethrough = true })
   -- StrideRemoteSuggestion: green for replacement text
-  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#50fa7b", italic = true })
+  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { default = true, fg = "#50fa7b", italic = true })
   -- StrideInsert: green/italic for insertion point marker
-  vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
+  vim.api.nvim_set_hl(0, "StrideInsert", { default = true, fg = "#50fa7b", italic = true })
   Log.debug("ui: highlight groups defined")
 end
 

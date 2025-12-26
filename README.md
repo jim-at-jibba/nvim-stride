@@ -112,6 +112,25 @@ require("stride").setup({
 })
 ```
 
+### Highlight Groups
+
+Stride defines the following highlight groups with sensible defaults. To customize, define them **before** calling `setup()`:
+
+```lua
+-- Custom highlights (define before setup)
+vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff5555", strikethrough = true })
+vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#8be9fd", italic = true })
+vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
+
+require("stride").setup()
+```
+
+| Highlight Group | Purpose | Default |
+|-----------------|---------|---------|
+| `StrideReplace` | Text being replaced (strikethrough) | `#ff6b6b`, strikethrough |
+| `StrideRemoteSuggestion` | Replacement text preview | `#50fa7b`, italic |
+| `StrideInsert` | Insertion point marker | `#50fa7b`, italic |
+
 ## Usage
 
 ### Completion Mode (default)
