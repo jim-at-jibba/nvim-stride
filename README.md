@@ -31,6 +31,7 @@ Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using t
 - Neovim 0.10+
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
 - [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) (optional, for smart context)
+- [fidget.nvim](https://github.com/j-hui/fidget.nvim) (optional, for notifications)
 - Cerebras API key
 
 ## Installation
@@ -43,6 +44,7 @@ Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using t
   dependencies = {
     "nvim-lua/plenary.nvim",
     "nvim-treesitter/nvim-treesitter", -- optional
+    "j-hui/fidget.nvim",               -- optional
   },
   config = function()
     require("stride").setup()
@@ -57,7 +59,8 @@ use {
   "your-username/nvim-stride",
   requires = {
     "nvim-lua/plenary.nvim",
-    "nvim-treesitter/nvim-treesitter",
+    "nvim-treesitter/nvim-treesitter", -- optional
+    "j-hui/fidget.nvim",               -- optional
   },
   config = function()
     require("stride").setup()
@@ -192,6 +195,15 @@ require("stride").setup({
   accept_keymap = "<C-y>",  -- Use Ctrl+Y instead of Tab
 })
 ```
+
+### With fidget.nvim
+
+If [fidget.nvim](https://github.com/j-hui/fidget.nvim) is installed, stride shows non-intrusive notifications when refactor suggestions are available:
+
+- "1 edit suggested — Tab to apply"
+- "Edit 1/3 — Tab to apply" (when multiple edits pending)
+
+No configuration needed — fidget is detected automatically.
 
 ## How It Works
 
