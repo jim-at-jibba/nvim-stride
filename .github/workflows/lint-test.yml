@@ -12,7 +12,7 @@ jobs:
         with:
           version: latest
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --color always --check --syntax lua52 lua
+          args: --color always --check lua
 
   test:
     runs-on: ubuntu-latest

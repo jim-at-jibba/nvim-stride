@@ -96,8 +96,10 @@ function M.attach_buffer(buf)
       -- Extract the changed text from old and new states
       -- on_bytes gives us: start position + length of old/new regions
       -- For single-line changes: end_col is the length, so actual end = start_col + end_col
-      local old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
-      local new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
+      local old_text =
+        M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
+      local new_text =
+        M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
 
       -- Only record if there's actual text change
       if old_text ~= new_text then
@@ -201,22 +203,18 @@ function M.get_changes_for_prompt(token_budget, file_filter)
     local change = M._changes[i]
 
     -- Skip changes from other files if filter specified
-    if file_filter and change.file ~= file_filter then
-      goto continue
+    if not file_filter or change.file == file_filter then
+      -- Format as unified diff style
+      local diff_text = M._format_change_as_diff(change)
+      local diff_chars = #diff_text
+
+      if char_count + diff_chars > char_budget then
+        break
+      end
+
+      table.insert(selected, 1, diff_text) -- Prepend to maintain order
+      char_count = char_count + diff_chars
     end
-
-    -- Format as unified diff style
-    local diff_text = M._format_change_as_diff(change)
-    local diff_chars = #diff_text
-
-    if char_count + diff_chars > char_budget then
-      break
-    end
-
-    table.insert(selected, 1, diff_text) -- Prepend to maintain order
-    char_count = char_count + diff_chars
-
-    ::continue::
   end
 
   if #selected == 0 then
