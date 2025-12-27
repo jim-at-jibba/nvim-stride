@@ -175,8 +175,8 @@ customize, define them **before** calling `setup()`:
   ------------------------------------------------------------------------
   Highlight Group                    Purpose            Default
   ---------------------------------- ------------------ ------------------
-  StrideReplace                      Text being         DiagnosticError fg,
-                                     replaced           strikethrough
+  StrideReplace                      Text being         DiagnosticError
+                                     replaced           fg, strikethrough
                                      (strikethrough)    
 
   StrideRemoteSuggestion             Replacement text   DiagnosticOk fg,
