@@ -38,7 +38,8 @@ local function _notify_fidget(current, total)
       { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 }
     )
   elseif total == 1 then
-    fidget.notify("1 edit suggested", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
+    fidget.notify("TAB to next edit", vim.log.levels.INFO, { key = "stride-edits", ttl = 1.5 })
+    -- fidget.notify("TAB to next edit", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
   end
 end
 
@@ -279,8 +280,7 @@ end
 local function _define_highlights()
   -- Get theme colors (fallback to hardcoded if not available)
   local red = vim.api.nvim_get_hl(0, { name = "DiagnosticError" }).fg
-  local green = vim.api.nvim_get_hl(0, { name = "DiagnosticOk" }).fg
-    or vim.api.nvim_get_hl(0, { name = "String" }).fg
+  local green = vim.api.nvim_get_hl(0, { name = "DiagnosticOk" }).fg or vim.api.nvim_get_hl(0, { name = "String" }).fg
 
   -- StrideReplace: red foreground for text to be replaced
   vim.api.nvim_set_hl(0, "StrideReplace", {
