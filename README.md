@@ -24,6 +24,7 @@ Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using t
 ### Core
 - Automatic race condition handling
 - Configurable debounce and filetypes
+- **Gutter icon**: Shows indicator in sign column when suggestion is active
 - **`:StrideEnable` / `:StrideDisable`**: Toggle predictions globally
 
 ## Requirements
@@ -112,6 +113,13 @@ require("stride").setup({
   max_tracked_changes = 10, -- Max edits to track in history
   token_budget = 1000,      -- Max tokens for change history in prompt
   small_file_threshold = 200, -- Files <= this many lines send whole content
+
+  -- Gutter Sign
+  sign = {
+    icon = nil,           -- nil = auto-detect nerd font, or set custom icon
+    hl = "StrideSign",    -- Highlight group for sign
+  },
+  -- sign = false,        -- Set to false to disable gutter sign
 })
 ```
 
@@ -124,15 +132,17 @@ Stride defines the following highlight groups with sensible defaults. To customi
 vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff5555", strikethrough = true })
 vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#8be9fd", italic = true })
 vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
+vim.api.nvim_set_hl(0, "StrideSign", { fg = "#50fa7b" })
 
 require("stride").setup()
 ```
 
 | Highlight Group | Purpose | Default |
 |-----------------|---------|---------|
-| `StrideReplace` | Text being replaced (strikethrough) | `#ff6b6b`, strikethrough |
-| `StrideRemoteSuggestion` | Replacement text preview | `#50fa7b`, italic |
-| `StrideInsert` | Insertion point marker | `#50fa7b`, italic |
+| `StrideReplace` | Text being replaced (strikethrough) | `DiagnosticError` fg, strikethrough |
+| `StrideRemoteSuggestion` | Replacement text preview | `DiagnosticOk` fg, italic |
+| `StrideInsert` | Insertion point marker | `DiagnosticOk` fg, italic |
+| `StrideSign` | Gutter icon for active suggestions | `DiagnosticOk` fg |
 
 ## Usage
 

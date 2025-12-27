@@ -38,7 +38,8 @@ local function _notify_fidget(current, total)
       { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 }
     )
   elseif total == 1 then
-    fidget.notify("1 edit suggested", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
+    fidget.notify("TAB to next edit", vim.log.levels.INFO, { key = "stride-edits", ttl = 1.5 })
+    -- fidget.notify("TAB to next edit", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
   end
 end
 
@@ -56,6 +57,9 @@ M.remote_hl_id = nil
 
 ---@type number|nil Virtual text extmark for remote suggestions
 M.remote_virt_id = nil
+
+---@type number|nil Extmark ID for gutter sign
+M.sign_id = nil
 
 ---@type boolean Whether Esc keymap is currently set
 M._esc_mapped = false
@@ -95,8 +99,69 @@ local function _clear_esc_mapping()
   Log.debug("ui: Esc mapping cleared")
 end
 
+---Check if nerd font is available
+---@return boolean
+local function _has_nerd_font()
+  if vim.g.have_nerd_font ~= nil then
+    return vim.g.have_nerd_font
+  end
+  local ok = pcall(require, "nvim-web-devicons")
+  return ok
+end
+
+---Get configured sign icon
+---@return string|nil icon or nil if disabled
+local function _get_sign_icon()
+  local Config = require("stride.config")
+  local sign = Config.options.sign
+  if sign == false then
+    return nil
+  end
+  if sign and sign.icon then
+    return sign.icon
+  end
+  return _has_nerd_font() and "󰷺" or ">"
+end
+
+---Place gutter sign at row
+---@param buf number Buffer handle
+---@param row number 0-indexed row
+local function _place_sign(buf, row)
+  local icon = _get_sign_icon()
+  if not icon then
+    return
+  end
+
+  local Config = require("stride.config")
+  local hl = (Config.options.sign and Config.options.sign.hl) or "StrideSign"
+
+  local ok, id = pcall(vim.api.nvim_buf_set_extmark, buf, ns_id, row, 0, {
+    sign_text = icon,
+    sign_hl_group = hl,
+    priority = 200, -- High priority since temporary
+  })
+  if ok then
+    M.sign_id = id
+    Log.debug("ui: sign placed at row %d, extmark=%d", row, id)
+  else
+    Log.debug("ui: failed to place sign: %s", tostring(id))
+  end
+end
+
+---Clear gutter sign
+local function _clear_sign()
+  if M.sign_id and M.current_buf then
+    Log.debug("ui.clear: removing sign extmark %d", M.sign_id)
+    pcall(vim.api.nvim_buf_del_extmark, M.current_buf, ns_id, M.sign_id)
+  end
+  M.sign_id = nil
+end
+
 ---Clear current ghost text
 function M.clear()
+  -- Clear gutter sign
+  _clear_sign()
+
   -- Clear local suggestion extmark
   if M.extmark_id and M.current_buf then
     Log.debug("ui.clear: removing extmark %d", M.extmark_id)
@@ -197,6 +262,10 @@ function M.render(text, row, col, buf)
     lines = lines,
     buf = buf,
   }
+
+  -- Place gutter sign
+  _place_sign(buf, row)
+
   Log.debug("SUCCESS: extmark_id=%d created", M.extmark_id)
 end
 
@@ -209,12 +278,33 @@ end
 ---Define highlight groups (called on setup and colorscheme change)
 ---Uses default=true so users can override these in their config
 local function _define_highlights()
+  -- Get theme colors (fallback to hardcoded if not available)
+  local red = vim.api.nvim_get_hl(0, { name = "DiagnosticError" }).fg
+  local green = vim.api.nvim_get_hl(0, { name = "DiagnosticOk" }).fg or vim.api.nvim_get_hl(0, { name = "String" }).fg
+
   -- StrideReplace: red foreground for text to be replaced
-  vim.api.nvim_set_hl(0, "StrideReplace", { default = true, fg = "#ff6b6b", strikethrough = true })
+  vim.api.nvim_set_hl(0, "StrideReplace", {
+    default = true,
+    fg = red,
+    strikethrough = true,
+  })
   -- StrideRemoteSuggestion: green for replacement text
-  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { default = true, fg = "#50fa7b", italic = true })
+  vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", {
+    default = true,
+    fg = green,
+    italic = true,
+  })
   -- StrideInsert: green/italic for insertion point marker
-  vim.api.nvim_set_hl(0, "StrideInsert", { default = true, fg = "#50fa7b", italic = true })
+  vim.api.nvim_set_hl(0, "StrideInsert", {
+    default = true,
+    fg = green,
+    italic = true,
+  })
+  -- StrideSign: gutter icon for active suggestions (green)
+  vim.api.nvim_set_hl(0, "StrideSign", {
+    default = true,
+    fg = green,
+  })
   Log.debug("ui: highlight groups defined")
 end
 
@@ -357,6 +447,9 @@ function M.render_remote(suggestion, buf, current, total)
   }
 
   _setup_esc_mapping(buf)
+
+  -- Place gutter sign
+  _place_sign(buf, row)
 
   -- Notify via fidget if available
   if current and total then
