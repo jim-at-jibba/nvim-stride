@@ -1,3 +1,7 @@
+---@class Stride.SignConfig
+---@field icon? string Gutter icon (default: "󰷺" if nerd font, ">" otherwise)
+---@field hl? string Highlight group (default: "StrideSign")
+
 ---@class Stride.Config
 ---@field api_key? string Cerebras API key (defaults to CEREBRAS_API_KEY env var)
 ---@field endpoint? string API endpoint URL
@@ -13,6 +17,7 @@
 ---@field max_tracked_changes? number Max changes to track across buffers (default: 10)
 ---@field token_budget? number Max tokens (~3 chars each) for change history in prompt (default: 1000)
 ---@field small_file_threshold? number Send whole file if <= this many lines (default: 200)
+---@field sign? Stride.SignConfig|false Gutter sign config (false to disable)
 
 local M = {}
 
@@ -32,6 +37,10 @@ M.defaults = {
   max_tracked_changes = 10,
   token_budget = 1000,
   small_file_threshold = 200,
+  sign = {
+    icon = nil, -- nil = auto-detect nerd font
+    hl = "StrideSign",
+  },
 }
 
 ---@type Stride.Config

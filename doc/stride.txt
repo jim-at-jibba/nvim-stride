@@ -50,6 +50,7 @@ CORE ~
 
 - Automatic race condition handling
 - Configurable debounce and filetypes
+- **Gutter icon**: Shows indicator in sign column when suggestion is active
 - **:StrideEnable / :StrideDisable**: Toggle predictions globally
 
 
@@ -145,6 +146,13 @@ CONFIGURATION ~
       max_tracked_changes = 10, -- Max edits to track in history
       token_budget = 1000,      -- Max tokens for change history in prompt
       small_file_threshold = 200, -- Files <= this many lines send whole content
+    
+      -- Gutter Sign
+      sign = {
+        icon = nil,           -- nil = auto-detect nerd font, or set custom icon
+        hl = "StrideSign",    -- Highlight group for sign
+      },
+      -- sign = false,        -- Set to false to disable gutter sign
     })
 <
 
@@ -159,6 +167,7 @@ customize, define them **before** calling `setup()`:
     vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff5555", strikethrough = true })
     vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#8be9fd", italic = true })
     vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
+    vim.api.nvim_set_hl(0, "StrideSign", { fg = "#50fa7b" })
     
     require("stride").setup()
 <
@@ -166,15 +175,18 @@ customize, define them **before** calling `setup()`:
   ------------------------------------------------------------------------
   Highlight Group                    Purpose            Default
   ---------------------------------- ------------------ ------------------
-  StrideReplace                      Text being         #ff6b6b,
+  StrideReplace                      Text being         DiagnosticError fg,
                                      replaced           strikethrough
                                      (strikethrough)    
 
-  StrideRemoteSuggestion             Replacement text   #50fa7b, italic
-                                     preview            
+  StrideRemoteSuggestion             Replacement text   DiagnosticOk fg,
+                                     preview            italic
 
-  StrideInsert                       Insertion point    #50fa7b, italic
-                                     marker             
+  StrideInsert                       Insertion point    DiagnosticOk fg,
+                                     marker             italic
+
+  StrideSign                         Gutter icon for    DiagnosticOk fg
+                                     active suggestions 
   ------------------------------------------------------------------------
 
 USAGE                                               *stride-stride.nvim-usage*
