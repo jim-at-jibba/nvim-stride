@@ -5,23 +5,26 @@
 
 > **Early Development**: This plugin is under active development. APIs and behavior may change between releases. Feedback and bug reports welcome!
 
-Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using the Cerebras API.
+AI-powered next-edit suggestions (NES) for Neovim. Stride predicts where you'll edit next based on your recent changes — rename a variable on line 10, and stride suggests updating line 50. Also supports inline ghost text completions.
+
+Powered by the Cerebras API for ultra-low latency inference.
 
 ## Features
 
-### Completion Mode (default)
-- Real-time code completion suggestions as you type
-- Treesitter-aware context capture for smarter completions
-- Multi-line ghost text rendering
-- Tab to accept suggestions
-
-### Refactor Mode
+### Refactor Mode (Next-Edit Suggestions)
 - **Next-edit prediction**: Rename `apple` to `orange` on line 1, and stride suggests updating line 20
-- **Automatic trigger**: Predictions fire on `InsertLeave` after edits
-- **Remote suggestions**: Highlights target text (strikethrough) with replacement shown at end of line
+- **Automatic trigger**: Predictions fire on `InsertLeave` and normal mode edits (`x`, `dd`, etc.)
+- **Remote suggestions**: Highlights target text (strikethrough) with replacement shown inline
+- **Insert detection**: Adds new parameters, properties, or arguments where needed
 - **Incremental tracking**: Edits tracked in real-time via `nvim_buf_attach`
-- **Esc to dismiss**: Press Esc in normal mode to clear remote suggestion
+- **Esc to dismiss**: Press Esc in normal mode to clear suggestion
 - **`:StrideClear`**: Clear all tracked changes manually
+
+### Completion Mode
+- Real-time ghost text completions as you type
+- Treesitter-aware context capture for smarter completions
+- Multi-line suggestions
+- Tab to accept
 
 ### Core
 - Automatic race condition handling
