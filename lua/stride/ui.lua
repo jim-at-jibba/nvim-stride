@@ -25,21 +25,28 @@ local ns_id_remote = vim.api.nvim_create_namespace("StrideRemote")
 ---Notify via fidget.nvim if available (optional integration)
 ---@param current number Current edit index
 ---@param total number Total pending edits
-local function _notify_fidget(current, total)
+---@param direction? "up"|"down" Direction arrow to show
+local function _notify_fidget(current, total, direction)
   local ok, fidget = pcall(require, "fidget")
   if not ok then
     return
   end
 
+  local arrow = ""
+  if direction == "up" then
+    arrow = "↑ "
+  elseif direction == "down" then
+    arrow = "↓ "
+  end
+
   if total > 1 then
     fidget.notify(
-      string.format("Edit %d/%d", current, total),
+      string.format("%sEdit %d/%d", arrow, current, total),
       vim.log.levels.INFO,
       { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 }
     )
   elseif total == 1 then
-    fidget.notify("TAB to next edit", vim.log.levels.INFO, { key = "stride-edits", ttl = 1.5 })
-    -- fidget.notify("TAB to next edit", vim.log.levels.INFO, { annote = "Tab to apply", key = "stride-edits", ttl = 1.5 })
+    fidget.notify(arrow .. "TAB to next edit", vim.log.levels.INFO, { key = "stride-edits", ttl = 1.5 })
   end
 end
 
@@ -453,7 +460,15 @@ function M.render_remote(suggestion, buf, current, total)
 
   -- Notify via fidget if available
   if current and total then
-    _notify_fidget(current, total)
+    -- Determine direction based on target line vs cursor
+    local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+    local direction = nil
+    if suggestion.line < cursor_line then
+      direction = "up"
+    elseif suggestion.line > cursor_line then
+      direction = "down"
+    end
+    _notify_fidget(current, total, direction)
   end
 
   Log.debug("SUCCESS: remote %s suggestion rendered for line %d", action, suggestion.line)
