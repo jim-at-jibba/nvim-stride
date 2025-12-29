@@ -6,7 +6,8 @@
 ---@field api_key? string Cerebras API key (defaults to CEREBRAS_API_KEY env var)
 ---@field endpoint? string API endpoint URL
 ---@field model? string Model name for completions
----@field debounce_ms? number Debounce delay in milliseconds
+---@field debounce_ms? number Debounce delay in milliseconds (insert mode)
+---@field debounce_normal_ms? number Debounce delay for normal mode edits (default: 500)
 ---@field accept_keymap? string Keymap to accept suggestion
 ---@field context_lines? number Base context window size (lines before/after cursor)
 ---@field use_treesitter? boolean Use Treesitter for smart context expansion
@@ -27,6 +28,7 @@ M.defaults = {
   endpoint = "https://api.cerebras.ai/v1/chat/completions",
   model = "gpt-oss-120b",
   debounce_ms = 300,
+  debounce_normal_ms = 500,
   accept_keymap = "<Tab>",
   context_lines = 30,
   use_treesitter = true,

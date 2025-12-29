@@ -13,6 +13,9 @@ local Log = require("stride.log")
 ---@type uv_timer_t|nil
 M.timer = nil
 
+---@type uv_timer_t|nil
+M.timer_normal = nil
+
 ---Helper to check if node type is a structural block
 ---@param node_type string
 ---@return boolean
@@ -157,6 +160,20 @@ function M.debounce(ms, callback)
   Log.debug("debounce: scheduling callback in %dms", ms)
   M.timer = vim.loop.new_timer()
   M.timer:start(ms, 0, vim.schedule_wrap(callback))
+end
+
+---Debounce for normal mode edits (separate timer)
+---@param ms number Delay in milliseconds
+---@param callback function Function to call after delay
+function M.debounce_normal(ms, callback)
+  if M.timer_normal then
+    Log.debug("debounce_normal: cancelling previous timer")
+    M.timer_normal:stop()
+    M.timer_normal:close()
+  end
+  Log.debug("debounce_normal: scheduling callback in %dms", ms)
+  M.timer_normal = vim.loop.new_timer()
+  M.timer_normal:start(ms, 0, vim.schedule_wrap(callback))
 end
 
 return M
