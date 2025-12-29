@@ -3,6 +3,8 @@
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/ellisonleao/nvim-plugin-template/lint-test.yml?branch=main&style=for-the-badge)
 ![Lua](https://img.shields.io/badge/Made%20with%20Lua-blueviolet.svg?style=for-the-badge&logo=lua)
 
+> **Early Development**: This plugin is under active development. APIs and behavior may change between releases. Feedback and bug reports welcome!
+
 Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using the Cerebras API.
 
 ## Features
