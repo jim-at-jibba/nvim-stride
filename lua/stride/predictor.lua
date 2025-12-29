@@ -15,7 +15,6 @@
 ---@field col number 0-indexed column
 
 ---@class Stride.Predictor
----Next-edit prediction module for V2 (magenta-style)
 local M = {}
 
 local Config = require("stride.config")
@@ -359,7 +358,7 @@ local function _validate_response(response, buf, cursor_pos)
   end
 end
 
----System prompt for general next-edit prediction (magenta-style)
+---System prompt for general next-edit prediction
 local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent changes and cursor position (marked by │).
 
 Rules:
