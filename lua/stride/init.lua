@@ -50,6 +50,13 @@ local function _get_cursor_pos()
   }
 end
 
+---Check if current state is from undo/redo (not at tip of undo tree)
+---@return boolean
+local function _is_undo_redo()
+  local tree = vim.fn.undotree()
+  return tree.seq_cur ~= tree.seq_last
+end
+
 ---Trigger V2 refactor prediction based on recent edits
 ---@param buf number Buffer handle
 ---@param cursor_pos Stride.CursorPos
@@ -191,6 +198,36 @@ function M.setup(opts)
           _trigger_refactor_prediction(buf, cursor_pos)
         end)
       end
+    end,
+  })
+
+  -- V2: Trigger refactor prediction on normal mode text changes (x, dd, etc.)
+  vim.api.nvim_create_autocmd("TextChanged", {
+    group = augroup,
+    callback = function()
+      if _is_disabled() then
+        return
+      end
+
+      if not _mode_has_refactor() then
+        return
+      end
+
+      -- Skip undo/redo operations
+      if _is_undo_redo() then
+        return
+      end
+
+      -- Clear stale prediction immediately
+      Ui.clear()
+      Predictor.cancel()
+
+      local buf = vim.api.nvim_get_current_buf()
+      local cursor_pos = _get_cursor_pos()
+
+      Utils.debounce_normal(Config.options.debounce_normal_ms, function()
+        _trigger_refactor_prediction(buf, cursor_pos)
+      end)
     end,
   })
 
