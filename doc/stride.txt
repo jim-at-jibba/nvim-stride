@@ -21,6 +21,9 @@ Table of Contents                                   *stride-table-of-contents*
 
 
 
+
+  **Early Development**: This plugin is under active development. APIs and
+  behavior may change between releases. Feedback and bug reports welcome!
 Ultra-low latency, multi-line code predictions ("Ghost Text") for Neovim using
 the Cerebras API.
 
