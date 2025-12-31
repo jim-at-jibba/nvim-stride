@@ -418,6 +418,12 @@ Prediction: {"action": null}
 function M.fetch_next_edit(buf, cursor_pos, callback)
   M.cancel()
 
+  if not vim.api.nvim_buf_is_valid(buf) then
+    Log.debug("predictor: buffer %d no longer valid", buf)
+    callback(nil)
+    return
+  end
+
   if not Config.options.api_key then
     Log.error("predictor: CEREBRAS_API_KEY not set")
     callback(nil)
