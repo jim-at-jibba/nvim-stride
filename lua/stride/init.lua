@@ -11,17 +11,36 @@ local Log = require("stride.log")
 local History = require("stride.history")
 local Predictor = require("stride.predictor")
 
----Check if current filetype is disabled
+---Check if filetype matches any disabled pattern
+---@param ft string Filetype to check
+---@param disabled table<string, boolean> Map of patterns to check against
+---@return boolean
+local function _matches_disabled(ft, disabled)
+  if not disabled or ft == "" then
+    return false
+  end
+  for pattern, enabled in pairs(disabled) do
+    if enabled and ft:match("^" .. pattern .. "$") then
+      return true
+    end
+  end
+  return false
+end
+
+---Check if current filetype/buftype is disabled
 ---@return boolean
 local function _is_disabled()
   if not M.enabled then
     return true
   end
   local ft = vim.bo.filetype
-  for _, disabled_ft in ipairs(Config.options.disabled_filetypes or {}) do
-    if ft == disabled_ft then
-      return true
-    end
+  local bt = vim.bo.buftype
+
+  if _matches_disabled(ft, Config.options.disabled_filetypes) then
+    return true
+  end
+  if _matches_disabled(bt, Config.options.disabled_buftypes) then
+    return true
   end
   return false
 end
@@ -112,7 +131,8 @@ function M.setup(opts)
   Log.debug("use_treesitter=%s", tostring(Config.options.use_treesitter))
   Log.debug("accept_keymap=%s", Config.options.accept_keymap)
   Log.debug("api_key=%s", Config.options.api_key and "(set)" or "(NOT SET)")
-  Log.debug("disabled_filetypes=%s", vim.inspect(Config.options.disabled_filetypes))
+  Log.debug("disabled_filetypes=%d patterns", vim.tbl_count(Config.options.disabled_filetypes or {}))
+  Log.debug("disabled_buftypes=%d patterns", vim.tbl_count(Config.options.disabled_buftypes or {}))
   Log.debug("mode=%s", Config.options.mode)
   Log.debug("show_remote=%s", tostring(Config.options.show_remote))
   Log.debug("max_tracked_changes=%d", Config.options.max_tracked_changes or 10)
@@ -277,6 +297,25 @@ function M.setup(opts)
     Log.debug(":StrideDisable executed")
     vim.notify("Stride: disabled", vim.log.levels.INFO)
   end, { desc = "Disable Stride predictions" })
+
+  -- Create :StrideStatus command for debugging
+  vim.api.nvim_create_user_command("StrideStatus", function()
+    local ft = vim.bo.filetype
+    local bt = vim.bo.buftype
+    local ft_disabled = _matches_disabled(ft, Config.options.disabled_filetypes)
+    local bt_disabled = _matches_disabled(bt, Config.options.disabled_buftypes)
+    local is_disabled = _is_disabled()
+
+    local lines = {
+      "Stride Status:",
+      "  enabled: " .. tostring(M.enabled),
+      "  filetype: '" .. ft .. "' (disabled: " .. tostring(ft_disabled) .. ")",
+      "  buftype: '" .. bt .. "' (disabled: " .. tostring(bt_disabled) .. ")",
+      "  overall disabled: " .. tostring(is_disabled),
+      "  mode: " .. (Config.options.mode or "completion"),
+    }
+    vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+  end, { desc = "Show Stride status for current buffer" })
 
   Log.debug(
     "setup complete, keymap=%s, debounce=%dms, mode=%s",

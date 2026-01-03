@@ -11,7 +11,8 @@
 ---@field accept_keymap? string Keymap to accept suggestion
 ---@field context_lines? number Base context window size (lines before/after cursor)
 ---@field use_treesitter? boolean Use Treesitter for smart context expansion
----@field disabled_filetypes? string[] Filetypes to disable predictions
+---@field disabled_filetypes? table<string, boolean> Filetypes to disable predictions (pattern keys, true = disabled)
+---@field disabled_buftypes? table<string, boolean> Buffer types to disable predictions
 ---@field debug? boolean Enable debug logging output
 ---@field mode? "completion"|"refactor"|"both" Operational mode (default: "completion")
 ---@field show_remote? boolean Show remote suggestions in refactor mode (default: true)
@@ -32,7 +33,85 @@ M.defaults = {
   accept_keymap = "<Tab>",
   context_lines = 30,
   use_treesitter = true,
-  disabled_filetypes = {},
+  disabled_filetypes = {
+    -- File explorers
+    ["NvimTree"] = true,
+    ["neo%-tree"] = true,
+    ["oil"] = true,
+    ["dirvish"] = true,
+    ["netrw"] = true,
+    ["minifiles"] = true,
+
+    -- Fuzzy finders / pickers
+    ["TelescopePrompt"] = true,
+    ["TelescopeResults"] = true,
+    ["fzf"] = true,
+    ["snacks_picker_input"] = true,
+
+    -- UI inputs / selects
+    ["DressingInput"] = true,
+    ["DressingSelect"] = true,
+    ["snacks_input"] = true,
+    ["prompt"] = true,
+
+    -- Plugin UIs
+    ["lazy"] = true,
+    ["mason"] = true,
+    ["lspinfo"] = true,
+    ["checkhealth"] = true,
+    ["help"] = true,
+    ["man"] = true,
+    ["qf"] = true,
+
+    -- Completion menus
+    ["cmp_menu"] = true,
+    ["cmp_docs"] = true,
+    ["blink%-cmp%-menu"] = true,
+
+    -- Git
+    ["fugitive"] = true,
+    ["gitcommit"] = true,
+    ["gitrebase"] = true,
+    ["NeogitCommitMessage"] = true,
+    ["Neogit.*"] = true,
+    ["Diffview.*"] = true,
+
+    -- DAP / debugging
+    ["dapui_.*"] = true,
+    ["dap%-repl"] = true,
+
+    -- Dashboard / greeter
+    ["alpha"] = true,
+    ["dashboard"] = true,
+    ["snacks_dashboard"] = true,
+    ["startify"] = true,
+    ["ministarter"] = true,
+
+    -- Notifications / messages
+    ["noice"] = true,
+    ["notify"] = true,
+
+    -- AI chat windows
+    ["copilot%-chat"] = true,
+    ["Avante"] = true,
+
+    -- Misc
+    ["Trouble"] = true,
+    ["trouble"] = true,
+    ["undotree"] = true,
+    ["aerial"] = true,
+    ["Outline"] = true,
+    ["spectre_panel"] = true,
+    ["toggleterm"] = true,
+    ["harpoon"] = true,
+    ["query"] = true,
+  },
+  disabled_buftypes = {
+    ["terminal"] = true,
+    ["nofile"] = true,
+    ["quickfix"] = true,
+    ["prompt"] = true,
+  },
   debug = false,
   mode = "completion",
   show_remote = true,
@@ -48,9 +127,44 @@ M.defaults = {
 ---@type Stride.Config
 M.options = {}
 
+---Convert array-style list to table format for backwards compatibility
+---@param tbl table|nil
+---@return table<string, boolean>
+local function normalize_disabled_list(tbl)
+  if not tbl then
+    return {}
+  end
+  local result = {}
+  for k, v in pairs(tbl) do
+    if type(k) == "number" and type(v) == "string" then
+      -- Array format: { "oil", "foo" } -> { ["oil"] = true, ["foo"] = true }
+      result[v] = true
+    else
+      -- Table format: { ["oil"] = true }
+      result[k] = v
+    end
+  end
+  return result
+end
+
 ---@param opts Stride.Config|nil
 function M.setup(opts)
-  M.options = vim.tbl_deep_extend("force", M.defaults, opts or {})
+  opts = opts or {}
+
+  -- Normalize user's disabled lists (handle array format)
+  local user_filetypes = normalize_disabled_list(opts.disabled_filetypes)
+  local user_buftypes = normalize_disabled_list(opts.disabled_buftypes)
+
+  -- Remove from opts so tbl_deep_extend doesn't overwrite defaults
+  opts.disabled_filetypes = nil
+  opts.disabled_buftypes = nil
+
+  -- Merge other options with defaults
+  M.options = vim.tbl_deep_extend("force", M.defaults, opts)
+
+  -- Merge disabled lists: defaults + user additions
+  M.options.disabled_filetypes = vim.tbl_extend("force", M.defaults.disabled_filetypes, user_filetypes)
+  M.options.disabled_buftypes = vim.tbl_extend("force", M.defaults.disabled_buftypes, user_buftypes)
 end
 
 return M

@@ -17,7 +17,9 @@ describe("stride", function()
       assert.equals("<Tab>", Config.options.accept_keymap)
       assert.equals(30, Config.options.context_lines)
       assert.is_true(Config.options.use_treesitter)
-      assert.same({}, Config.options.disabled_filetypes)
+      assert.is_true(Config.options.disabled_filetypes["oil"])
+      assert.is_true(Config.options.disabled_filetypes["TelescopePrompt"])
+      assert.is_true(Config.options.disabled_buftypes["terminal"])
       assert.equals("completion", Config.options.mode)
       assert.is_true(Config.options.show_remote)
     end)
@@ -26,11 +28,11 @@ describe("stride", function()
       Config.setup({
         model = "custom-model",
         debounce_ms = 500,
-        disabled_filetypes = { "markdown" },
+        disabled_filetypes = { ["markdown"] = true },
       })
       assert.equals("custom-model", Config.options.model)
       assert.equals(500, Config.options.debounce_ms)
-      assert.same({ "markdown" }, Config.options.disabled_filetypes)
+      assert.is_true(Config.options.disabled_filetypes["markdown"])
       -- Defaults preserved
       assert.equals(30, Config.options.context_lines)
       assert.equals("<Tab>", Config.options.accept_keymap)
