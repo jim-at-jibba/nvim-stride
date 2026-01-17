@@ -39,11 +39,16 @@ function M.cancel()
   end
 end
 
----Find all occurrences of text in buffer, excluding comments and strings
+---Find all occurrences of text in buffer
 ---@param buf number Buffer handle
 ---@param find_text string Text to find
+---@param skip_comments_strings? boolean Whether to skip occurrences in comments/strings (default: true)
 ---@return {line: number, col_start: number, col_end: number, line_text: string}[]
-local function _find_all_occurrences(buf, find_text)
+local function _find_all_occurrences(buf, find_text, skip_comments_strings)
+  if skip_comments_strings == nil then
+    skip_comments_strings = true
+  end
+
   local occurrences = {}
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
@@ -58,8 +63,8 @@ local function _find_all_occurrences(buf, find_text)
       local row = line_num - 1 -- 0-indexed for treesitter
       local col = col_start - 1 -- 0-indexed for treesitter
 
-      -- Skip occurrences inside comments or strings
-      if Treesitter.is_inside_comment_or_string(buf, row, col) then
+      -- Skip occurrences inside comments or strings (if requested)
+      if skip_comments_strings and Treesitter.is_inside_comment_or_string(buf, row, col) then
         Log.debug("predictor: skipping occurrence in comment/string at line %d col %d", line_num, col_start)
       else
         table.insert(occurrences, {
@@ -247,8 +252,8 @@ local function _validate_response(response, buf, cursor_pos)
     local anchor_text = response.anchor:gsub("│", "")
     local insert_text = response.insert:gsub("│", "")
 
-    -- Find all occurrences of anchor
-    local occurrences = _find_all_occurrences(buf, anchor_text)
+    -- Find all occurrences of anchor (don't skip comments - anchors can be comments like "// TODO")
+    local occurrences = _find_all_occurrences(buf, anchor_text, false)
 
     if #occurrences == 0 then
       Log.debug("predictor: anchor text '%s' not found in buffer", anchor_text)
@@ -411,14 +416,6 @@ local function _build_structured_prompt(ctx, changes_text)
   table.insert(parts, buffer_context)
   table.insert(parts, "</Context>")
   table.insert(parts, "")
-
-  -- Project rules (if available)
-  if ctx.agent_context then
-    table.insert(parts, "<ProjectRules>")
-    table.insert(parts, ctx.agent_context)
-    table.insert(parts, "</ProjectRules>")
-    table.insert(parts, "")
-  end
 
   -- Cursor position
   table.insert(parts, string.format('<Cursor line="%d" col="%d" />', ctx.cursor.row, ctx.cursor.col))

@@ -19,6 +19,7 @@ end
 local _agent_cache = {}
 
 local function _discover_agent_context(file_path)
+  local Log = require("stride.log")
   local context_files = Config.options.context_files
   if not context_files or context_files == false then
     return nil
@@ -41,6 +42,7 @@ local function _discover_agent_context(file_path)
       local stat = vim.loop.fs_stat(file_path_full)
       if stat and stat.type == "file" then
         if _agent_cache[file_path_full] then
+          Log.debug("context: using cached %s", file_path_full)
           return _agent_cache[file_path_full]
         end
 
@@ -49,6 +51,9 @@ local function _discover_agent_context(file_path)
           local content = table.concat(lines, "\n")
           if #content > 2000 then
             content = content:sub(1, 2000)
+            Log.debug("context: loaded %s (truncated to 2000 chars)", file_path_full)
+          else
+            Log.debug("context: loaded %s (%d chars)", file_path_full, #content)
           end
 
           _agent_cache[file_path_full] = content
@@ -66,6 +71,7 @@ local function _discover_agent_context(file_path)
     local stat = vim.loop.fs_stat(file_path_full)
     if stat and stat.type == "file" then
       if _agent_cache[file_path_full] then
+        Log.debug("context: using cached %s", file_path_full)
         return _agent_cache[file_path_full]
       end
       local ok, lines = pcall(vim.fn.readfile, file_path_full)
@@ -73,6 +79,9 @@ local function _discover_agent_context(file_path)
         local content = table.concat(lines, "\n")
         if #content > 2000 then
           content = content:sub(1, 2000)
+          Log.debug("context: loaded %s (truncated to 2000 chars)", file_path_full)
+        else
+          Log.debug("context: loaded %s (%d chars)", file_path_full, #content)
         end
         _agent_cache[file_path_full] = content
         return content
@@ -156,5 +165,6 @@ M.Context = Context
 M.clear_cache = function()
   _agent_cache = {}
 end
+M.discover_agent_context = _discover_agent_context
 
 return M

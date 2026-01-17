@@ -5,10 +5,12 @@
 ---@field col number 0-indexed column
 ---@field buf number Buffer handle
 ---@field filetype string Buffer filetype
+---@field agent_context? string Project context from AGENTS.md
 
 local M = {}
 
 local Log = require("stride.log")
+local Context = require("stride.context")
 
 ---@type uv_timer_t|nil
 M.timer = nil
@@ -138,6 +140,9 @@ function M.get_context(base_context_lines)
     vim.bo[buf].filetype
   )
 
+  local file_path = vim.fn.expand("%:.")
+  local agent_context = Context.discover_agent_context(file_path)
+
   return {
     prefix = table.concat(prefix_lines, "\n"),
     suffix = table.concat(suffix_lines, "\n"),
@@ -145,6 +150,7 @@ function M.get_context(base_context_lines)
     col = col,
     buf = buf,
     filetype = vim.bo[buf].filetype,
+    agent_context = agent_context,
   }
 end
 
