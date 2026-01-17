@@ -113,24 +113,33 @@ local function _do_fetch(context, callback, attempt)
   local system_prompt = [[You are a code completion engine. Predict what the user will type next.
 
 Rules:
-- Output ONLY the characters to insert at cursor
-- Do NOT repeat any code from the context
+- Output ONLY the characters to insert at cursor position
+- Complete the current statement or expression, not entire blocks
+- If a comment describes intent (e.g., "// log the id"), output code that fulfills it
+- When cursor is mid-identifier, complete that identifier first
+- Prefer variables, functions, and types visible in the surrounding code
+- Match the naming conventions and style of the existing code
+- Do NOT output code that already exists after the cursor
 - Do NOT include markdown, code fences, or explanations
-- Keep completions short and focused
-- Output empty string if nothing to suggest]]
+- Output empty string if no meaningful completion]]
+
+  local agent_section = ""
+  if context.agent_context then
+    agent_section = string.format("<AgentContext>\n%s\n</AgentContext>\n\n", context.agent_context)
+    Log.debug("including agent_context (%d chars)", #context.agent_context)
+  end
 
   local user_prompt = string.format(
-    [[Language: %s
+    [[%sLanguage: %s
 
-<cursor_before>
+<code_before_cursor>
 %s
-</cursor_before>
+</code_before_cursor>
 
-<cursor_after>
+<code_after_cursor>
 %s
-</cursor_after>
-
-Output only the completion text.]],
+</code_after_cursor>]],
+    agent_section,
     context.filetype,
     prompt_prefix,
     prompt_suffix
@@ -146,7 +155,7 @@ Output only the completion text.]],
     messages = messages,
     temperature = 0,
     max_tokens = 128,
-    stop = { "<|eot_id|>", "<|end_of_text|>", "\n\n" },
+    stop = { "<|eot_id|>", "<|end_of_text|>" },
     reasoning_effort = "low",
   }
 
