@@ -169,6 +169,12 @@ function M.clear()
   -- Clear gutter sign
   _clear_sign()
 
+  -- Clear notification
+  local ok, Notify = pcall(require, "stride.notify")
+  if ok then
+    Notify.hide()
+  end
+
   -- Clear local suggestion extmark
   if M.extmark_id and M.current_buf then
     Log.debug("ui.clear: removing extmark %d", M.extmark_id)
@@ -311,6 +317,16 @@ local function _define_highlights()
   vim.api.nvim_set_hl(0, "StrideSign", {
     default = true,
     fg = green,
+  })
+  -- StrideNotify: notification text (neutral)
+  vim.api.nvim_set_hl(0, "StrideNotify", {
+    default = true,
+    link = "NormalFloat",
+  })
+  -- StrideNotifyBorder: notification border (neutral)
+  vim.api.nvim_set_hl(0, "StrideNotifyBorder", {
+    default = true,
+    link = "FloatBorder",
   })
   Log.debug("ui: highlight groups defined")
 end
@@ -458,8 +474,12 @@ function M.render_remote(suggestion, buf, current, total)
   -- Place gutter sign
   _place_sign(buf, row)
 
-  -- Notify via fidget if available
+  -- Notify user of pending edit
   if current and total then
+    local Config = require("stride.config")
+    local notify_cfg = Config.options.notify
+    local backend = notify_cfg and notify_cfg.backend or "builtin"
+
     -- Determine direction based on target line vs cursor
     local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
     local direction = nil
@@ -468,7 +488,13 @@ function M.render_remote(suggestion, buf, current, total)
     elseif suggestion.line > cursor_line then
       direction = "down"
     end
-    _notify_fidget(current, total, direction)
+
+    if backend == "fidget" then
+      _notify_fidget(current, total, direction)
+    else
+      local Notify = require("stride.notify")
+      Notify.tab_hint(direction)
+    end
   end
 
   Log.debug("SUCCESS: remote %s suggestion rendered for line %d", action, suggestion.line)

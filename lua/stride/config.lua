@@ -2,6 +2,11 @@
 ---@field icon? string Gutter icon (default: "󰷺" if nerd font, ">" otherwise)
 ---@field hl? string Highlight group (default: "StrideSign")
 
+---@class Stride.NotifyConfig
+---@field enabled? boolean Enable notifications (default: true)
+---@field timeout? number Display duration in ms (default: 2000)
+---@field backend? "builtin"|"fidget" Notification backend (default: "builtin")
+
 ---@class Stride.Config
 ---@field api_key? string Cerebras API key (defaults to CEREBRAS_API_KEY env var)
 ---@field endpoint? string API endpoint URL
@@ -21,6 +26,7 @@
 ---@field small_file_threshold? number Send whole file if <= this many lines (default: 200)
 ---@field sign? Stride.SignConfig|false Gutter sign config (false to disable)
 ---@field context_files? string[]|false  Files to read for project context (default: false)
+---@field notify? Stride.NotifyConfig|false Notification config (false to disable)
 
 local M = {}
 
@@ -124,6 +130,11 @@ M.defaults = {
     hl = "StrideSign",
   },
   context_files = false,
+  notify = {
+    enabled = true,
+    timeout = 2000,
+    backend = "builtin",
+  },
 }
 
 ---@type Stride.Config
