@@ -62,6 +62,25 @@ function M.is_supported(filetype)
   return ok and parser ~= nil
 end
 
+---Check if position is inside a comment or string using highlight captures
+---@param buf number Buffer handle
+---@param row number 0-indexed row
+---@param col number 0-indexed column
+---@return boolean
+function M.is_inside_comment_or_string(buf, row, col)
+  local ok, captures = pcall(vim.treesitter.get_captures_at_pos, buf, row, col)
+  if not ok or not captures then
+    return false
+  end
+  for _, capture in ipairs(captures) do
+    local name = capture.capture
+    if name:match("^comment") or name:match("^string") then
+      return true
+    end
+  end
+  return false
+end
+
 ---@param node TSNode
 ---@param buf number
 ---@return string|nil

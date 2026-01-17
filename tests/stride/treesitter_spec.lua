@@ -100,4 +100,52 @@ describe("treesitter", function()
       assert.is_boolean(supported)
     end)
   end)
+
+  describe("is_inside_comment_or_string", function()
+    it("returns true for position inside lua comment", function()
+      vim.bo[buf].filetype = "lua"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        "-- this is a comment",
+        "local x = 1",
+      })
+      -- Force treesitter to parse
+      vim.treesitter.get_parser(buf, "lua"):parse()
+
+      local result = Treesitter.is_inside_comment_or_string(buf, 0, 5)
+      assert.is_true(result)
+    end)
+
+    it("returns false for position in code", function()
+      vim.bo[buf].filetype = "lua"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        "-- this is a comment",
+        "local x = 1",
+      })
+      vim.treesitter.get_parser(buf, "lua"):parse()
+
+      local result = Treesitter.is_inside_comment_or_string(buf, 1, 6)
+      assert.is_false(result)
+    end)
+
+    it("returns true for position inside string", function()
+      vim.bo[buf].filetype = "lua"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        'local msg = "hello world"',
+      })
+      vim.treesitter.get_parser(buf, "lua"):parse()
+
+      local result = Treesitter.is_inside_comment_or_string(buf, 0, 15)
+      assert.is_true(result)
+    end)
+
+    it("returns false when no parser available", function()
+      vim.bo[buf].filetype = "unknown_filetype_xyz"
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+        "-- comment",
+      })
+
+      local result = Treesitter.is_inside_comment_or_string(buf, 0, 5)
+      assert.is_false(result)
+    end)
+  end)
 end)

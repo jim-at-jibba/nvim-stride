@@ -22,6 +22,7 @@ local History = require("stride.history")
 local Log = require("stride.log")
 local curl = require("plenary.curl")
 local ContextModule = require("stride.context")
+local Treesitter = require("stride.treesitter")
 
 ---@type table|nil Current active job handle
 M._active_job = nil
@@ -38,7 +39,7 @@ function M.cancel()
   end
 end
 
----Find all occurrences of text in buffer
+---Find all occurrences of text in buffer, excluding comments and strings
 ---@param buf number Buffer handle
 ---@param find_text string Text to find
 ---@return {line: number, col_start: number, col_end: number, line_text: string}[]
@@ -53,12 +54,21 @@ local function _find_all_occurrences(buf, find_text)
       if not col_start then
         break
       end
-      table.insert(occurrences, {
-        line = line_num,
-        col_start = col_start - 1, -- 0-indexed
-        col_end = col_end, -- exclusive
-        line_text = line, -- store full line for insert detection
-      })
+
+      local row = line_num - 1 -- 0-indexed for treesitter
+      local col = col_start - 1 -- 0-indexed for treesitter
+
+      -- Skip occurrences inside comments or strings
+      if Treesitter.is_inside_comment_or_string(buf, row, col) then
+        Log.debug("predictor: skipping occurrence in comment/string at line %d col %d", line_num, col_start)
+      else
+        table.insert(occurrences, {
+          line = line_num,
+          col_start = col_start - 1, -- 0-indexed
+          col_end = col_end, -- exclusive
+          line_text = line, -- store full line for insert detection
+        })
+      end
       start_pos = col_start + 1
     end
   end

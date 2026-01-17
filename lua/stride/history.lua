@@ -12,6 +12,7 @@ local M = {}
 
 local Config = require("stride.config")
 local Log = require("stride.log")
+local Treesitter = require("stride.treesitter")
 
 ---@type Stride.TrackedChange[] Recent changes across all buffers
 M._changes = {}
@@ -160,6 +161,13 @@ function M.attach_buffer(buf)
 
       -- Only record if there's actual text change
       if old_text ~= new_text then
+        -- Skip changes inside comments or strings
+        if Treesitter.is_inside_comment_or_string(b, start_row, start_col) then
+          Log.debug("history: skipping change in comment/string at line %d", start_row + 1)
+          M._buffer_states[b] = new_lines
+          return
+        end
+
         M.record_change({
           file = _get_relative_path(b),
           old_text = old_text,
