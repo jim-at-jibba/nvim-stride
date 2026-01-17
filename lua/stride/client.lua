@@ -291,6 +291,26 @@ Rules:
       -- Strip leading/trailing whitespace
       content = content:gsub("^%s+", ""):gsub("%s+$", "")
 
+      -- Comment-to-code: if cursor is at end of full-line comment and
+      -- suggestion is code (not comment continuation), prepend newline with indent
+      local Treesitter = require("stride.treesitter")
+      if Treesitter.is_full_line_comment(request_buf, r) then
+        local current_line = vim.api.nvim_buf_get_lines(request_buf, r, r + 1, false)[1] or ""
+        local indent = current_line:match("^(%s*)") or ""
+
+        -- Check if suggestion is a comment continuation
+        local is_comment_continuation = content:match("^//")
+          or content:match("^#")
+          or content:match("^%-%-")
+          or content:match("^/%*")
+          or content:match("^%*")
+
+        if not is_comment_continuation then
+          content = "\n" .. indent .. content
+          Log.debug("comment-to-code: prepended newline with indent '%s'", indent)
+        end
+      end
+
       -- Echo detection: reject if response contains context
       if _is_echo_response(content, context.prefix, context.suffix) then
         Log.debug("REJECTED: response appears to echo context")

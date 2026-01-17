@@ -104,6 +104,26 @@ function M.is_inside_comment_or_string(buf, row, col)
   return false
 end
 
+---Check if entire line is a comment (not trailing comment after code)
+---@param buf number Buffer handle
+---@param row number 0-indexed row
+---@return boolean
+function M.is_full_line_comment(buf, row)
+  local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
+  if not line then
+    return false
+  end
+
+  -- Find first non-whitespace character
+  local first_char_col = line:find("%S")
+  if not first_char_col then
+    return false -- empty/whitespace-only line
+  end
+
+  -- Check if first non-whitespace is inside a comment
+  return M.is_inside_comment_or_string(buf, row, first_char_col - 1) -- 0-indexed
+end
+
 ---@param node TSNode
 ---@param buf number
 ---@return string|nil
