@@ -23,6 +23,8 @@ Powered by the Cerebras API for ultra-low latency inference.
 ### Completion Mode
 - Real-time ghost text completions as you type
 - Treesitter-aware context capture for smarter completions
+- Comment-intent completion: type `// log the id` and get `console.log(id)`
+- Project context: include AGENTS.md rules in prompts
 - Multi-line suggestions
 - Tab to accept
 
@@ -37,7 +39,7 @@ Powered by the Cerebras API for ultra-low latency inference.
 - Neovim 0.10+
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
 - [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) (optional, for smart context)
-- [fidget.nvim](https://github.com/j-hui/fidget.nvim) (optional, for notifications)
+- [snacks.nvim](https://github.com/folke/snacks.nvim) (optional, for animated notifications)
 - Cerebras API key
 
 ## Installation
@@ -49,8 +51,8 @@ Powered by the Cerebras API for ultra-low latency inference.
   "your-username/nvim-stride",
   dependencies = {
     "nvim-lua/plenary.nvim",
-    "nvim-treesitter/nvim-treesitter", -- optional
-    "j-hui/fidget.nvim",               -- optional
+    "nvim-treesitter/nvim-treesitter", -- optional, smart context
+    "folke/snacks.nvim",               -- optional, animated notifications
   },
   config = function()
     require("stride").setup()
@@ -65,8 +67,8 @@ use {
   "your-username/nvim-stride",
   requires = {
     "nvim-lua/plenary.nvim",
-    "nvim-treesitter/nvim-treesitter", -- optional
-    "j-hui/fidget.nvim",               -- optional
+    "nvim-treesitter/nvim-treesitter", -- optional, smart context
+    "folke/snacks.nvim",               -- optional, animated notifications
   },
   config = function()
     require("stride").setup()
@@ -99,35 +101,46 @@ require("stride").setup({
   -- API Configuration
   api_key = os.getenv("CEREBRAS_API_KEY"),
   endpoint = "https://api.cerebras.ai/v1/chat/completions",
-  model = "gpt-oss-120b",  -- Default model
+  model = "gpt-oss-120b",
 
   -- UX Settings
-  debounce_ms = 300,        -- Wait time before triggering prediction
-  accept_keymap = "<Tab>",  -- Key to accept suggestion
-  context_lines = 60,       -- Lines of context before/after cursor
+  debounce_ms = 300,           -- Debounce for insert mode (ms)
+  debounce_normal_ms = 500,    -- Debounce for normal mode edits (ms)
+  accept_keymap = "<Tab>",     -- Key to accept suggestion
+  context_lines = 30,          -- Lines of context before/after cursor
 
   -- Feature Flags
-  use_treesitter = true,    -- Use Treesitter for smart context expansion
-  disabled_filetypes = {},  -- Filetypes to disable (e.g., {"markdown", "text"})
+  use_treesitter = true,       -- Use Treesitter for smart context expansion
+  disabled_filetypes = {},     -- Additional filetypes to disable (merged with defaults)
+  disabled_buftypes = {},      -- Additional buftypes to disable (merged with defaults)
+  debug = false,               -- Enable debug logging to file
 
   -- Mode Selection
-  mode = "completion",      -- "completion", "refactor", or "both"
-  show_remote = true,       -- Show remote suggestions in refactor mode
+  mode = "completion",         -- "completion", "refactor", or "both"
+  show_remote = true,          -- Show remote suggestions in refactor mode
 
   -- Refactor Mode Settings
-  max_tracked_changes = 10, -- Max edits to track in history
-  token_budget = 1000,      -- Max tokens for change history in prompt
-  small_file_threshold = 200, -- Files <= this many lines send whole content
+  max_tracked_changes = 10,    -- Max edits to track in history
+  token_budget = 1000,         -- Max tokens for change history in prompt
+  small_file_threshold = 200,  -- Files <= this many lines send whole content
 
   -- Project Context
-  context_files = false,    -- false (disabled) or {"AGENTS.md", ".stride.md"}
+  context_files = false,       -- false or {"AGENTS.md", ".cursor/rules"}
 
   -- Gutter Sign
   sign = {
-    icon = nil,           -- nil = auto-detect nerd font, or set custom icon
-    hl = "StrideSign",    -- Highlight group for sign
+    icon = nil,                -- nil = auto-detect nerd font ("󰷺" or ">")
+    hl = "StrideSign",         -- Highlight group for sign
   },
-  -- sign = false,        -- Set to false to disable gutter sign
+  -- sign = false,             -- Set to false to disable gutter sign
+
+  -- Notifications (bottom-center popup when suggestions available)
+  notify = {
+    enabled = true,            -- Show notifications
+    timeout = 2000,            -- Display duration (ms)
+    backend = "builtin",       -- "builtin" or "fidget"
+  },
+  -- notify = false,           -- Set to false to disable notifications
 })
 ```
 
@@ -141,6 +154,8 @@ vim.api.nvim_set_hl(0, "StrideReplace", { fg = "#ff5555", strikethrough = true }
 vim.api.nvim_set_hl(0, "StrideRemoteSuggestion", { fg = "#8be9fd", italic = true })
 vim.api.nvim_set_hl(0, "StrideInsert", { fg = "#50fa7b", italic = true })
 vim.api.nvim_set_hl(0, "StrideSign", { fg = "#50fa7b" })
+vim.api.nvim_set_hl(0, "StrideNotify", { bg = "#1e1e2e" })
+vim.api.nvim_set_hl(0, "StrideNotifyBorder", { fg = "#6c7086" })
 
 require("stride").setup()
 ```
@@ -151,6 +166,8 @@ require("stride").setup()
 | `StrideRemoteSuggestion` | Replacement text preview | `DiagnosticOk` fg, italic |
 | `StrideInsert` | Insertion point marker | `DiagnosticOk` fg, italic |
 | `StrideSign` | Gutter icon for active suggestions | `DiagnosticOk` fg |
+| `StrideNotify` | Notification popup text | `NormalFloat` |
+| `StrideNotifyBorder` | Notification popup border | `FloatBorder` |
 
 ## Usage
 
@@ -214,14 +231,31 @@ require("stride").setup({
 })
 ```
 
-### With fidget.nvim
+### Notifications
 
-If [fidget.nvim](https://github.com/j-hui/fidget.nvim) is installed, stride shows non-intrusive notifications when refactor suggestions are available:
+When refactor suggestions are available, stride shows a bottom-center notification:
 
-- "1 edit suggested — Tab to apply"
-- "Edit 1/3 — Tab to apply" (when multiple edits pending)
+```
+󰷺 ↓ Tab to apply
+```
 
-No configuration needed — fidget is detected automatically.
+The arrow indicates direction (↑ suggestion above cursor, ↓ below cursor).
+
+**Animation**: If [snacks.nvim](https://github.com/folke/snacks.nvim) is installed, notifications fade in/out smoothly. Otherwise they appear/disappear instantly.
+
+**Disable notifications**:
+```lua
+require("stride").setup({
+  notify = false,
+})
+```
+
+**Use fidget.nvim instead** (legacy):
+```lua
+require("stride").setup({
+  notify = { backend = "fidget" },
+})
+```
 
 ## How It Works
 
@@ -252,6 +286,8 @@ lua/
     ├── ui.lua        # Ghost text rendering (local + remote)
     ├── history.lua   # Buffer snapshots, diff computation
     ├── predictor.lua # Next-edit prediction
+    ├── notify.lua    # Bottom-center notifications
+    ├── context.lua   # Project context (AGENTS.md) discovery
     └── log.lua       # Debug logging
 ```
 
