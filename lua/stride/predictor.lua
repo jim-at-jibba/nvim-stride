@@ -474,7 +474,7 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
     model = Config.options.model,
     messages = messages,
     temperature = 0,
-    max_tokens = 256,
+    max_tokens = 512,
     reasoning_effort = "low",
   }
 

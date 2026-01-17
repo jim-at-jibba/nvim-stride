@@ -62,22 +62,45 @@ function M.is_supported(filetype)
   return ok and parser ~= nil
 end
 
----Check if position is inside a comment or string using highlight captures
+---Node types that represent comments across languages
+local COMMENT_NODES = {
+  ["comment"] = true,
+  ["line_comment"] = true,
+  ["block_comment"] = true,
+}
+
+---Node types that represent strings across languages
+local STRING_NODES = {
+  ["string"] = true,
+  ["string_literal"] = true,
+  ["template_string"] = true,
+  ["interpreted_string_literal"] = true,
+  ["raw_string_literal"] = true,
+  ["string_content"] = true,
+  ["string_fragment"] = true,
+}
+
+---Check if position is inside a comment or string using treesitter node types
 ---@param buf number Buffer handle
 ---@param row number 0-indexed row
 ---@param col number 0-indexed column
 ---@return boolean
 function M.is_inside_comment_or_string(buf, row, col)
-  local ok, captures = pcall(vim.treesitter.get_captures_at_pos, buf, row, col)
-  if not ok or not captures then
+  local ok, node = pcall(vim.treesitter.get_node, { bufnr = buf, pos = { row, col } })
+  if not ok or not node then
     return false
   end
-  for _, capture in ipairs(captures) do
-    local name = capture.capture
-    if name:match("^comment") or name:match("^string") then
+
+  -- Walk up the tree to check if any ancestor is a comment or string
+  local current = node
+  while current do
+    local node_type = current:type()
+    if COMMENT_NODES[node_type] or STRING_NODES[node_type] then
       return true
     end
+    current = current:parent()
   end
+
   return false
 end
 
