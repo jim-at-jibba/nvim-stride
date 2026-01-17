@@ -119,6 +119,9 @@ require("stride").setup({
   token_budget = 1000,      -- Max tokens for change history in prompt
   small_file_threshold = 200, -- Files <= this many lines send whole content
 
+  -- Project Context
+  context_files = false,    -- false (disabled) or {"AGENTS.md", ".stride.md"}
+
   -- Gutter Sign
   sign = {
     icon = nil,           -- nil = auto-detect nerd font, or set custom icon
@@ -235,6 +238,7 @@ No configuration needed — fidget is detected automatically.
 4. **Remote Rendering**: Target text shown with strikethrough, replacement at EOL
 5. **Accept or Dismiss**: Tab accepts, Esc dismisses in normal mode
 6. **Token Budget**: Change history is trimmed to fit token budget for prompt
+7. **Project Context**: If configured, AGENTS.md content is included in prompt for project-specific rules
 
 ## Plugin Structure
 

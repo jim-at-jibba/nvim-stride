@@ -20,6 +20,7 @@
 ---@field token_budget? number Max tokens (~3 chars each) for change history in prompt (default: 1000)
 ---@field small_file_threshold? number Send whole file if <= this many lines (default: 200)
 ---@field sign? Stride.SignConfig|false Gutter sign config (false to disable)
+---@field context_files? string[]|false  Files to read for project context (default: false)
 
 local M = {}
 
@@ -122,6 +123,7 @@ M.defaults = {
     icon = nil, -- nil = auto-detect nerd font
     hl = "StrideSign",
   },
+  context_files = false,
 }
 
 ---@type Stride.Config

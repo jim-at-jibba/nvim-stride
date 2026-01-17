@@ -71,6 +71,16 @@ describe("stride", function()
       assert.equals(500, Config.options.token_budget)
       assert.equals(100, Config.options.small_file_threshold)
     end)
+
+    it("context_files defaults to false", function()
+      Config.setup({})
+      assert.is_false(Config.options.context_files)
+    end)
+
+    it("context_files accepts string array", function()
+      Config.setup({ context_files = { "AGENTS.md", ".stride.md" } })
+      assert.same({ "AGENTS.md", ".stride.md" }, Config.options.context_files)
+    end)
   end)
 
   describe("ui", function()

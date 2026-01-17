@@ -21,6 +21,7 @@ local Config = require("stride.config")
 local History = require("stride.history")
 local Log = require("stride.log")
 local curl = require("plenary.curl")
+local ContextModule = require("stride.context")
 
 ---@type table|nil Current active job handle
 M._active_job = nil
@@ -35,65 +36,6 @@ function M.cancel()
     M._request_id = M._request_id + 1
     M._active_job = nil
   end
-end
-
----Get buffer context centered around cursor position
----@param buf number Buffer handle
----@param cursor_pos Stride.CursorPos Cursor position {line, col}
----@return string context_text, number start_line, number end_line
-local function _get_buffer_context(buf, cursor_pos)
-  local total_lines = vim.api.nvim_buf_line_count(buf)
-  local context_lines = Config.options.context_lines or 30
-  local small_threshold = Config.options.small_file_threshold or 200
-
-  local start_line, end_line
-
-  -- Small file: send everything
-  if total_lines <= small_threshold then
-    start_line = 1
-    end_line = total_lines
-  else
-    -- Center around cursor: 30% before, 70% after
-    local before = math.floor(context_lines * 0.3)
-    local after = context_lines - before
-
-    start_line = math.max(1, cursor_pos.line - before)
-    end_line = math.min(total_lines, cursor_pos.line + after)
-  end
-
-  local lines = vim.api.nvim_buf_get_lines(buf, start_line - 1, end_line, false)
-
-  -- Add line numbers and cursor marker
-  local numbered = {}
-  for i, line in ipairs(lines) do
-    local line_num = start_line + i - 1
-    local display_line = line
-
-    -- Mark cursor position with │
-    if line_num == cursor_pos.line then
-      local col = math.min(cursor_pos.col, #line)
-      display_line = line:sub(1, col) .. "│" .. line:sub(col + 1)
-    end
-
-    table.insert(numbered, string.format("%d: %s", line_num, display_line))
-  end
-
-  return table.concat(numbered, "\n"), start_line, end_line
-end
-
----Get relative path for current buffer
----@param buf number Buffer handle
----@return string
-local function _get_relative_path(buf)
-  local full_path = vim.api.nvim_buf_get_name(buf)
-  if full_path == "" then
-    return "[buffer]"
-  end
-  local cwd = vim.fn.getcwd()
-  if full_path:sub(1, #cwd) == cwd then
-    return full_path:sub(#cwd + 2)
-  end
-  return full_path
 end
 
 ---Find all occurrences of text in buffer
@@ -359,7 +301,14 @@ local function _validate_response(response, buf, cursor_pos)
 end
 
 ---System prompt for general next-edit prediction
-local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent changes and cursor position (marked by │).
+local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent changes and cursor position.
+
+Context is provided in XML tags for clarity:
+- <RecentChanges> shows the user's recent edits in diff format
+- <ContainingFunction> shows the function being edited (when detected)
+- <Context> shows numbered lines around cursor with │ marking position
+- <ProjectRules> contains project-specific guidelines (when available)
+- <Cursor> shows exact cursor position
 
 Rules:
 - Return ONLY valid JSON, no markdown
@@ -385,31 +334,89 @@ IMPORTANT - Infer the original value:
 Examples:
 
 Variable rename (replace):
-Recent changes: typing on line 10
-Current context line 10: local config│ = {
-Context line 20: print(configTest1)
+<RecentChanges>test.lua:10 typing</RecentChanges>
+<Context>10: local config│ = {
+20: print(configTest1)</Context>
 Analysis: User changed "configTest1" to "config" on line 10. Line 20 still has old value.
 Prediction: {"action": "replace", "find": "configTest1", "replace": "config"}
 
-Add property to dataclass (insert):
-Recent changes: added "age: int" on line 58
-Current context line 58: age: int│
-Context line 65: User(id=1, name=name, email=email)
-Analysis: User added new "age" field to dataclass. Constructor call needs age parameter.
+Add property (insert):
+<RecentChanges>Added "age: int"</RecentChanges>
+<ContainingFunction name="User">class User:
+    id: int
+    name: str
+    age: int│</ContainingFunction>
+<Context>65: User(id=1, name=name, email=email)</Context>
+Analysis: User added "age" field. Constructor call needs the argument.
 Prediction: {"action": "insert", "anchor": "email=email", "position": "after", "insert": ", age=0"}
 
-Add function parameter (insert):
-Recent changes: added "timeout: int" parameter on line 5
-Current context line 5: def fetch(url: str, timeout: int│):
-Context line 20: result = fetch("https://api.example.com")
-Analysis: User added timeout parameter. Call site needs the argument.
-Prediction: {"action": "insert", "anchor": "\"https://api.example.com\"", "position": "after", "insert": ", timeout=30"}
-
 No prediction needed:
-Recent changes: edits on line 10
-Current context shows all occurrences are already updated
+<RecentChanges>edits on line 10</RecentChanges>
+<Context>All occurrences already updated</Context>
 Prediction: {"action": null}
 ]]
+
+---Build structured prompt using XML tags
+---@param ctx Stride.PredictionContext
+---@param changes_text string
+---@return string
+local function _build_structured_prompt(ctx, changes_text)
+  local parts = {}
+
+  -- Recent changes
+  table.insert(parts, "<RecentChanges>")
+  table.insert(parts, changes_text)
+  table.insert(parts, "</RecentChanges>")
+  table.insert(parts, "")
+
+  -- Containing function (if detected)
+  if ctx.containing_function then
+    local fn = ctx.containing_function
+    local name_attr = fn.name and string.format(' name="%s"', fn.name) or ""
+    local lines_attr = string.format(' lines="%d-%d"', fn.range.start.row, fn.range.end_.row)
+    table.insert(parts, string.format("<ContainingFunction%s%s>", name_attr, lines_attr))
+    table.insert(parts, fn.text)
+    table.insert(parts, "</ContainingFunction>")
+    table.insert(parts, "")
+  end
+
+  -- Buffer context
+  local total_lines = vim.api.nvim_buf_line_count(ctx.buf)
+  local context_lines = Config.options.context_lines or 30
+  local small_threshold = Config.options.small_file_threshold or 200
+
+  local start_line, end_line
+  if total_lines <= small_threshold then
+    start_line = 1
+    end_line = total_lines
+  else
+    local before = math.floor(context_lines * 0.3)
+    local after = context_lines - before
+    start_line = math.max(1, ctx.cursor.row - before)
+    end_line = math.min(total_lines, ctx.cursor.row + after)
+  end
+
+  local buffer_context = ctx:build_prompt_context(start_line, end_line)
+  table.insert(parts, string.format('<Context file="%s" lines="%d-%d">', ctx.file_path, start_line, end_line))
+  table.insert(parts, buffer_context)
+  table.insert(parts, "</Context>")
+  table.insert(parts, "")
+
+  -- Project rules (if available)
+  if ctx.agent_context then
+    table.insert(parts, "<ProjectRules>")
+    table.insert(parts, ctx.agent_context)
+    table.insert(parts, "</ProjectRules>")
+    table.insert(parts, "")
+  end
+
+  -- Cursor position
+  table.insert(parts, string.format('<Cursor line="%d" col="%d" />', ctx.cursor.row, ctx.cursor.col))
+  table.insert(parts, "")
+  table.insert(parts, "Predict the most likely next edit the user will make.")
+
+  return table.concat(parts, "\n")
+end
 
 ---Fetch next-edit prediction from LLM
 ---@param buf number Buffer handle
@@ -430,9 +437,11 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
     return
   end
 
+  -- Build context using new Context module
+  local ctx = ContextModule.Context.from_current_buffer()
+
   -- Get recent changes for current file only
-  local file_path = _get_relative_path(buf)
-  local changes_text = History.get_changes_for_prompt(Config.options.token_budget, file_path)
+  local changes_text = History.get_changes_for_prompt(Config.options.token_budget, ctx.file_path)
   if changes_text == "(no recent changes)" then
     Log.debug("predictor: no recent changes to analyze")
     callback(nil)
@@ -443,24 +452,8 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
   local current_request_id = M._request_id
   local start_time = vim.loop.hrtime()
 
-  -- Get buffer context centered on cursor
-  local buffer_context, start_line, end_line = _get_buffer_context(buf, cursor_pos)
-
-  local user_prompt = string.format(
-    [[Recent changes:
-%s
-
-Current context (│ marks cursor position):
-%s:%d:%d
-%s
-
-Predict the most likely next edit the user will make.]],
-    changes_text,
-    file_path,
-    start_line,
-    end_line,
-    buffer_context
-  )
+  -- Build structured prompt with XML tags
+  local user_prompt = _build_structured_prompt(ctx, changes_text)
 
   local messages = {
     { role = "system", content = SYSTEM_PROMPT },
@@ -477,8 +470,8 @@ Predict the most likely next edit the user will make.]],
 
   Log.debug("===== PREDICTOR REQUEST =====")
   Log.debug("request_id=%d", current_request_id)
-  Log.debug("cursor: line=%d col=%d", cursor_pos.line, cursor_pos.col)
-  Log.debug("context: %s lines %d-%d", file_path, start_line, end_line)
+  Log.debug("cursor: line=%d col=%d", ctx.cursor.row, ctx.cursor.col)
+  Log.debug("context: %s", ctx.file_path)
   Log.debug("user_prompt:\n%s", user_prompt)
 
   M._active_job = curl.post(Config.options.endpoint, {
