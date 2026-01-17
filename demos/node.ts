@@ -11,15 +11,15 @@ import express, { Request, Response } from "express";
 // -----------------------------------------------------------------------------
 // TEST 1: Variable rename propagation
 // 1. Change "app" to "server" on line 18
-// 2. Exit insert mode - stride predicts updating other "app" references
+// 2. Exit insert mode - stride predicts updating other "server" references
 // 3. Press Tab to accept each suggestion
 // -----------------------------------------------------------------------------
 
-const server = express();
+const app = express();
 const PORT = 3000;
 
-server.use(express.json());
-server.listen(PORT, () => console.log(`Running on ${PORT}`));
+app.use(express.json());
+app.listen(PORT, () => console.log(`Running on ${PORT}`));
 
 // -----------------------------------------------------------------------------
 // TEST 2: Function rename
@@ -31,7 +31,6 @@ interface Post {
   id: string;
   title: string;
   content: string;
-  author: string;
 }
 
 const isValidPost = (post: Partial<Post>): boolean => {
@@ -60,7 +59,6 @@ const createPost = (post: Partial<Post>): Post => {
     id: crypto.randomUUID(),
     title: post.title!,
     content: post.content!,
-    author: post.author!,
     // <- insertion point for "author"
   };
 };

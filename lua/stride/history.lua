@@ -4,6 +4,7 @@
 ---@field new_text string Text after change
 ---@field range {start_line: number, start_col: number, end_line: number, end_col: number}
 ---@field timestamp number os.time() when change occurred
+---@field hrtime number High-resolution timestamp for grouping rapid changes
 
 ---@class Stride.History
 ---Incremental change tracking across buffers for V2 next-edit prediction
@@ -21,6 +22,15 @@ M._attached_buffers = {}
 ---@type table<number, string[]> Previous buffer state for computing diffs
 M._buffer_states = {}
 
+---@type table<string, string[]> Snapshot of line(s) before rapid editing started (key: "file:line")
+M._edit_snapshots = {}
+
+---@type table<string, number> Last edit hrtime per line (key: "file:line")
+M._last_edit_time = {}
+
+---Threshold in nanoseconds to consider edits as part of same "session" (500ms)
+local AGGREGATION_THRESHOLD_NS = 500 * 1000000
+
 ---Get relative path for a buffer
 ---@param buf number Buffer handle
 ---@return string
@@ -36,10 +46,45 @@ local function _get_relative_path(buf)
   return full_path
 end
 
----Record a change
+---Record a change with aggregation of rapid consecutive edits
 ---@param change Stride.TrackedChange
 function M.record_change(change)
   local max_changes = Config.options.max_tracked_changes or 10
+  local now = vim.loop.hrtime()
+  change.hrtime = now
+
+  local key = change.file .. ":" .. change.range.start_line
+
+  -- Check if this is a continuation of rapid editing on the same line
+  local last_time = M._last_edit_time[key]
+  local is_continuation = last_time and (now - last_time) < AGGREGATION_THRESHOLD_NS
+
+  if is_continuation then
+    -- Find and update the existing change for this line instead of adding new
+    for i = #M._changes, 1, -1 do
+      local existing = M._changes[i]
+      if existing.file == change.file and existing.range.start_line == change.range.start_line then
+        -- Update the existing change with new text (keep original old_text from snapshot)
+        existing.new_text = change.new_text
+        existing.hrtime = now
+        existing.range.end_col = math.max(existing.range.end_col, change.range.end_col)
+        M._last_edit_time[key] = now
+
+        Log.debug(
+          "history.record_change: aggregated edit on %s line %d, old='%s' new='%s'",
+          change.file,
+          change.range.start_line,
+          existing.old_text,
+          existing.new_text
+        )
+        return
+      end
+    end
+  end
+
+  -- New edit session on this line - take snapshot and record
+  M._edit_snapshots[key] = change.old_text
+  M._last_edit_time[key] = now
 
   table.insert(M._changes, change)
 
@@ -49,10 +94,12 @@ function M.record_change(change)
   end
 
   Log.debug(
-    "history.record_change: %s lines %d-%d, now tracking %d changes",
+    "history.record_change: %s lines %d-%d, old='%s' new='%s', now tracking %d changes",
     change.file,
     change.range.start_line,
     change.range.end_line,
+    change.old_text,
+    change.new_text,
     #M._changes
   )
 end
@@ -93,13 +140,23 @@ function M.attach_buffer(buf)
       local old_lines = M._buffer_states[b]
       local new_lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
 
-      -- Extract the changed text from old and new states
-      -- on_bytes gives us: start position + length of old/new regions
-      -- For single-line changes: end_col is the length, so actual end = start_col + end_col
-      local old_text =
-        M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
-      local new_text =
-        M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
+      -- For single-line edits, track full line content for better context
+      local is_single_line = old_end_row == 0 and new_end_row == 0
+      local old_text, new_text
+
+      if is_single_line then
+        -- Track full line content (trimmed) for single-line changes
+        local old_line = old_lines[start_row + 1] or ""
+        local new_line = new_lines[start_row + 1] or ""
+        old_text = old_line
+        new_text = new_line
+      else
+        -- Multi-line changes: extract the specific changed region
+        old_text =
+          M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
+        new_text =
+          M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
+      end
 
       -- Only record if there's actual text change
       if old_text ~= new_text then
@@ -252,6 +309,8 @@ end
 ---Clear all tracked changes
 function M.clear()
   M._changes = {}
+  M._edit_snapshots = {}
+  M._last_edit_time = {}
   Log.debug("history.clear: cleared all tracked changes")
 end
 
