@@ -130,9 +130,13 @@ function M.show(msg, opts)
 
   -- Schedule hide after timeout
   hide_timer = vim.uv.new_timer()
-  hide_timer:start(timeout, 0, vim.schedule_wrap(function()
-    M.hide(true)
-  end))
+  hide_timer:start(
+    timeout,
+    0,
+    vim.schedule_wrap(function()
+      M.hide(true)
+    end)
+  )
 
   Log.debug("notify: showing '%s' for %dms", msg, timeout)
 end

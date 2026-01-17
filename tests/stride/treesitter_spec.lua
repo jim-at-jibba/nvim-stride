@@ -25,29 +25,29 @@ describe("treesitter", function()
         "  return x",
         "end",
       })
-      
+
       local point = Point.new(2, 3)
       local info = Treesitter.get_containing_function(buf, point)
-      
+
       if info then
         assert.is_not_nil(info.range)
         assert.is_not_nil(info.text)
         assert.equals("foo", info.name)
       end
     end)
-    
+
     it("returns nil when not inside function", function()
       vim.bo[buf].filetype = "lua"
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
         "local x = 1",
         "local y = 2",
       })
-      
+
       local point = Point.new(1, 1)
       local info = Treesitter.get_containing_function(buf, point)
       assert.is_nil(info)
     end)
-    
+
     it("returns innermost function when cursor in nested function", function()
       vim.bo[buf].filetype = "lua"
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
@@ -59,10 +59,10 @@ describe("treesitter", function()
         "  return inner()",
         "end",
       })
-      
+
       local point = Point.new(3, 5)
       local info = Treesitter.get_containing_function(buf, point)
-      
+
       if info then
         assert.equals("inner", info.name)
       end
@@ -74,27 +74,27 @@ describe("treesitter", function()
       local supported = Treesitter.is_supported("lua")
       assert.is_boolean(supported)
     end)
-    
+
     it("returns true for javascript", function()
       local supported = Treesitter.is_supported("javascript")
       assert.is_boolean(supported)
     end)
-    
+
     it("returns true for typescript", function()
       local supported = Treesitter.is_supported("typescript")
       assert.is_boolean(supported)
     end)
-    
+
     it("returns true for python", function()
       local supported = Treesitter.is_supported("python")
       assert.is_boolean(supported)
     end)
-    
+
     it("returns true for go", function()
       local supported = Treesitter.is_supported("go")
       assert.is_boolean(supported)
     end)
-    
+
     it("returns true for rust", function()
       local supported = Treesitter.is_supported("rust")
       assert.is_boolean(supported)

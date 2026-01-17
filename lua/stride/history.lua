@@ -153,10 +153,8 @@ function M.attach_buffer(buf)
         new_text = new_line
       else
         -- Multi-line changes: extract the specific changed region
-        old_text =
-          M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
-        new_text =
-          M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
+        old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
+        new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
       end
 
       -- Only record if there's actual text change

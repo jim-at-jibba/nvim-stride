@@ -27,8 +27,8 @@ describe("geo", function()
         end
 
         local p = Point.from_cursor()
-        assert.equal(3, p.row)  -- row stays 1-indexed
-        assert.equal(6, p.col)  -- col becomes 1-indexed (5 + 1)
+        assert.equal(3, p.row) -- row stays 1-indexed
+        assert.equal(6, p.col) -- col becomes 1-indexed (5 + 1)
       end)
 
       it("handles cursor at position 0", function()
@@ -51,8 +51,8 @@ describe("geo", function()
 
       it("handles arbitrary positions", function()
         local p = Point.from_ts(4, 7)
-        assert.equal(5, p.row)   -- 4 + 1
-        assert.equal(8, p.col)   -- 7 + 1
+        assert.equal(5, p.row) -- 4 + 1
+        assert.equal(8, p.col) -- 7 + 1
       end)
     end)
 
@@ -67,8 +67,8 @@ describe("geo", function()
       it("converts arbitrary positions", function()
         local p = Point.new(5, 10)
         local r, c = p:to_vim()
-        assert.equal(4, r)   -- 5 - 1
-        assert.equal(9, c)   -- 10 - 1
+        assert.equal(4, r) -- 5 - 1
+        assert.equal(9, c) -- 10 - 1
       end)
     end)
 
@@ -83,8 +83,8 @@ describe("geo", function()
       it("handles arbitrary positions", function()
         local p = Point.new(3, 7)
         local r, c = p:to_ts()
-        assert.equal(2, r)   -- 3 - 1
-        assert.equal(6, c)   -- 7 - 1
+        assert.equal(2, r) -- 3 - 1
+        assert.equal(6, c) -- 7 - 1
       end)
     end)
 
@@ -99,8 +99,8 @@ describe("geo", function()
       it("handles arbitrary positions", function()
         local p = Point.new(4, 8)
         local r, c = p:to_cursor()
-        assert.equal(4, r)   -- row stays 1-indexed
-        assert.equal(7, c)   -- col becomes 0-indexed (8 - 1)
+        assert.equal(4, r) -- row stays 1-indexed
+        assert.equal(7, c) -- col becomes 0-indexed (8 - 1)
       end)
     end)
 
@@ -203,23 +203,23 @@ describe("geo", function()
       it("creates range from treesitter node with range() method", function()
         local mock_node = {
           range = function()
-            return 1, 2, 4, 8  -- sr, sc, er, ec (0-indexed)
-          end
+            return 1, 2, 4, 8 -- sr, sc, er, ec (0-indexed)
+          end,
         }
 
         local r = Range.from_ts_node(mock_node, buf)
         assert.equal(buf, r.buf)
-        assert.equal(2, r.start.row)   -- 1 + 1
-        assert.equal(3, r.start.col)   -- 2 + 1
-        assert.equal(5, r.end_.row)    -- 4 + 1
-        assert.equal(9, r.end_.col)    -- 8 + 1
+        assert.equal(2, r.start.row) -- 1 + 1
+        assert.equal(3, r.start.col) -- 2 + 1
+        assert.equal(5, r.end_.row) -- 4 + 1
+        assert.equal(9, r.end_.col) -- 8 + 1
       end)
 
       it("handles node at (0,0)", function()
         local mock_node = {
           range = function()
             return 0, 0, 0, 5
-          end
+          end,
         }
 
         local r = Range.from_ts_node(mock_node, buf)
@@ -448,7 +448,7 @@ describe("geo", function()
         local end_ = Point.new(5, 3)
         local r = Range.new(buf, start, end_)
 
-        assert.equal(4, r:line_count())  -- rows 2, 3, 4, 5
+        assert.equal(4, r:line_count()) -- rows 2, 3, 4, 5
       end)
 
       it("handles range on consecutive rows", function()
@@ -490,7 +490,7 @@ describe("geo", function()
           "function test()",
           "  local x = 1",
           "  return x",
-          "end"
+          "end",
         }
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
 
