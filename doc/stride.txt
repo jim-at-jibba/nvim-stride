@@ -80,7 +80,7 @@ LAZY.NVIM ~
 
 >lua
     {
-      "your-username/nvim-stride",
+      "jim-at-jibba/nvim-stride",
       dependencies = {
         "nvim-lua/plenary.nvim",
         "nvim-treesitter/nvim-treesitter", -- optional, smart context
@@ -97,7 +97,7 @@ PACKER.NVIM ~
 
 >lua
     use {
-      "your-username/nvim-stride",
+      "jim-at-jibba/nvim-stride",
       requires = {
         "nvim-lua/plenary.nvim",
         "nvim-treesitter/nvim-treesitter", -- optional, smart context
