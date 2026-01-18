@@ -13,6 +13,7 @@ Table of Contents                                   *stride-table-of-contents*
   - Plugin Structure                     |stride-stride.nvim-plugin-structure|
   - Roadmap                                       |stride-stride.nvim-roadmap|
   - Development                               |stride-stride.nvim-development|
+  - Thanks                                         |stride-stride.nvim-thanks|
   - License                                       |stride-stride.nvim-license|
 2. Links                                                        |stride-links|
 
@@ -401,6 +402,14 @@ FORMAT CODE ~
 >bash
     stylua lua/
 <
+
+
+THANKS                                             *stride-stride.nvim-thanks*
+
+Inspired by: - 99 <https://github.com/ThePrimeagen/99> - ThePrimeagen’s AI
+code completion experiment - magenta.nvim
+<https://github.com/dlants/magenta.nvim> - AI-powered code suggestions for
+Neovim
 
 
 LICENSE                                           *stride-stride.nvim-license*
