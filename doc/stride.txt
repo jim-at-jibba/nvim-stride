@@ -1,4 +1,4 @@
-*stride.txt*          For Neovim >= 0.8.0         Last change: 2026 January 17
+*stride.txt*          For Neovim >= 0.8.0         Last change: 2026 January 18
 
 ==============================================================================
 Table of Contents                                   *stride-table-of-contents*
@@ -49,10 +49,10 @@ REFACTOR MODE (NEXT-EDIT SUGGESTIONS) ~
 COMPLETION MODE ~
 
 - Real-time ghost text completions as you type
+- **Focused completions**: Completes the current statement/expression, not entire blocks — intentionally minimal to stay fast and non-intrusive
 - Treesitter-aware context capture for smarter completions
 - Comment-intent completion: type `// log the id` and get `console.log(id)`
 - Project context: include AGENTS.md rules in prompts
-- Multi-line suggestions
 - Tab to accept
 
 
@@ -343,8 +343,9 @@ COMPLETION MODE ~
 
 1. **Debounced Trigger**: After you stop typing for 300ms, a prediction is requested
 2. **Smart Context**: Uses Treesitter to capture full function/class definitions in context
-3. **Ghost Text**: Suggestions appear as dimmed text after your cursor
-4. **Race Protection**: Stale responses are discarded if you’ve moved the cursor
+3. **Focused Output**: Completions target the current statement/expression only — not scaffolding or large code blocks. This is by design for low latency and high acceptance rates.
+4. **Ghost Text**: Suggestions appear as dimmed text after your cursor
+5. **Race Protection**: Stale responses are discarded if you’ve moved the cursor
 
 
 REFACTOR MODE ~
