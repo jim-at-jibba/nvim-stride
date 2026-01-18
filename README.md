@@ -314,6 +314,12 @@ make test
 stylua lua/
 ```
 
+## Thanks
+
+Inspired by:
+- [99](https://github.com/ThePrimeagen/99) - ThePrimeagen's AI code completion experiment
+- [magenta.nvim](https://github.com/dlants/magenta.nvim) - AI-powered code suggestions for Neovim
+
 ## License
 
 MIT
