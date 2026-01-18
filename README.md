@@ -48,7 +48,7 @@ Powered by the Cerebras API for ultra-low latency inference.
 
 ```lua
 {
-  "your-username/nvim-stride",
+  "jim-at-jibba/nvim-stride",
   dependencies = {
     "nvim-lua/plenary.nvim",
     "nvim-treesitter/nvim-treesitter", -- optional, smart context
@@ -64,7 +64,7 @@ Powered by the Cerebras API for ultra-low latency inference.
 
 ```lua
 use {
-  "your-username/nvim-stride",
+  "jim-at-jibba/nvim-stride",
   requires = {
     "nvim-lua/plenary.nvim",
     "nvim-treesitter/nvim-treesitter", -- optional, smart context
