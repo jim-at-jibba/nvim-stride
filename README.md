@@ -5,6 +5,14 @@
 
 > **Early Development**: This plugin is under active development. APIs and behavior may change between releases. Feedback and bug reports welcome!
 
+<details>
+  <summary><b>Demos</b></summary>
+
+  - **Completion Mode**: https://github.com/user-attachments/assets/25915755-c94c-458b-8157-bd500bdef8fc
+  - **Refactor Mode**: https://github.com/user-attachments/assets/d36f2220-3474-4c46-860b-da22f19a0ec6
+
+</details>
+
 AI-powered next-edit suggestions (NES) for Neovim. Stride predicts where you'll edit next based on your recent changes — rename a variable on line 10, and stride suggests updating line 50. Also supports inline ghost text completions.
 
 Powered by the Cerebras API for ultra-low latency inference.
