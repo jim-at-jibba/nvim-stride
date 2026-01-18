@@ -173,12 +173,16 @@ require("stride").setup()
 
 ### Completion Mode (default)
 
+https://github.com/user-attachments/assets/25915755-c94c-458b-8157-bd500bdef8fc
+
 1. Start typing in insert mode
 2. After a brief pause (300ms default), a ghost text suggestion appears
 3. Press `<Tab>` to accept the suggestion
 4. Press any other key to dismiss and continue typing
 
 ### Refactor Mode
+
+https://github.com/user-attachments/assets/d36f2220-3474-4c46-860b-da22f19a0ec6
 
 1. Enable refactor mode:
    ```lua

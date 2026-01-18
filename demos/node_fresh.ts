@@ -28,12 +28,14 @@ interface User {
   name: string;
 }
 
-const getUserById = (id: string): User => {
+const fetchUser = (id: string): User => {
   return { id, name: "Test User" };
 };
 
-const user1 = getUserById("123");
-const user2 = getUserById("456");
+const user1 = fetchUser("123");
+console.log(user1);
+const user2 = fetchUser("456");
+console.log(user2);
 
 // =============================================================================
 // TEST 3: Constant rename
