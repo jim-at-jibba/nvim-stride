@@ -68,42 +68,58 @@ M.remote_virt_id = nil
 ---@type number|nil Extmark ID for gutter sign
 M.sign_id = nil
 
----@type boolean Whether Esc keymap is currently set
-M._esc_mapped = false
+---@type boolean Whether dismiss keymap is currently set
+M._dismiss_mapped = false
 
----@type number|nil Buffer where Esc mapping was set
-M._esc_buf = nil
+---@type number|nil Buffer where dismiss mapping was set
+M._dismiss_buf = nil
 
----Setup Esc keymap to dismiss suggestion
+---@type string|nil The dismiss key that was mapped
+M._dismiss_key = nil
+
+---Setup dismiss keymap to clear suggestion
 ---@param buf number Buffer handle
-local function _setup_esc_mapping(buf)
-  if M._esc_mapped then
+local function _setup_dismiss_mapping(buf)
+  if M._dismiss_mapped then
     return
   end
 
-  -- Set buffer-local Esc mapping in normal mode
-  vim.keymap.set("n", "<Esc>", function()
-    M.clear()
-    -- Re-feed Esc so it still works for other things (like clearing search highlight)
-    return "<Esc>"
-  end, { buffer = buf, expr = true, silent = true, desc = "Dismiss Stride suggestion" })
+  local Config = require("stride.config")
+  local key = Config.options.dismiss_keymap or "<Esc>"
 
-  M._esc_mapped = true
-  M._esc_buf = buf
-  Log.debug("ui: Esc mapping set for buf %d", buf)
+  -- Set buffer-local dismiss mapping in normal mode
+  if key == "<Esc>" then
+    -- For <Esc>, use expr mode to re-feed the key after clearing
+    vim.keymap.set("n", key, function()
+      M.clear()
+      -- Re-feed Esc so it still works for other things (like clearing search highlight)
+      return "<Esc>"
+    end, { buffer = buf, expr = true, silent = true, desc = "Dismiss Stride suggestion" })
+  else
+    -- For custom keys, just clear without re-feeding
+    vim.keymap.set("n", key, function()
+      M.clear()
+    end, { buffer = buf, silent = true, desc = "Dismiss Stride suggestion" })
+  end
+
+  M._dismiss_mapped = true
+  M._dismiss_buf = buf
+  M._dismiss_key = key
+  Log.debug("ui: dismiss mapping '%s' set for buf %d", key, buf)
 end
 
----Remove Esc keymap
-local function _clear_esc_mapping()
-  if not M._esc_mapped or not M._esc_buf then
+---Remove dismiss keymap
+local function _clear_dismiss_mapping()
+  if not M._dismiss_mapped or not M._dismiss_buf or not M._dismiss_key then
     return
   end
 
   -- Remove the buffer-local mapping
-  pcall(vim.keymap.del, "n", "<Esc>", { buffer = M._esc_buf })
-  M._esc_mapped = false
-  M._esc_buf = nil
-  Log.debug("ui: Esc mapping cleared")
+  pcall(vim.keymap.del, "n", M._dismiss_key, { buffer = M._dismiss_buf })
+  M._dismiss_mapped = false
+  M._dismiss_buf = nil
+  M._dismiss_key = nil
+  Log.debug("ui: dismiss mapping cleared")
 end
 
 ---Check if nerd font is available
@@ -197,7 +213,7 @@ function M.clear()
   M.current_suggestion = nil
   M.current_buf = nil
 
-  _clear_esc_mapping()
+  _clear_dismiss_mapping()
 end
 
 ---Render ghost text at position
@@ -469,7 +485,7 @@ function M.render_remote(suggestion, buf, current, total)
     insert = suggestion.insert,
   }
 
-  _setup_esc_mapping(buf)
+  _setup_dismiss_mapping(buf)
 
   -- Place gutter sign
   _place_sign(buf, row)

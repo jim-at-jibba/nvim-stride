@@ -115,6 +115,7 @@ require("stride").setup({
   debounce_ms = 300,           -- Debounce for insert mode (ms)
   debounce_normal_ms = 500,    -- Debounce for normal mode edits (ms)
   accept_keymap = "<Tab>",     -- Key to accept suggestion
+  dismiss_keymap = "<Esc>",    -- Key to dismiss suggestion (normal mode)
   context_lines = 30,          -- Lines of context before/after cursor
 
   -- Feature Flags
@@ -239,7 +240,8 @@ Or use a different keymap for stride to avoid conflicts:
 
 ```lua
 require("stride").setup({
-  accept_keymap = "<C-y>",  -- Use Ctrl+Y instead of Tab
+  accept_keymap = "<C-y>",    -- Use Ctrl+Y instead of Tab
+  dismiss_keymap = "<C-e>",   -- Use Ctrl+E instead of Esc
 })
 ```
 
