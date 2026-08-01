@@ -304,6 +304,61 @@ function M.get_ns_id()
   return ns_id
 end
 
+---Try to advance the current local suggestion by consuming typed characters.
+---If the user typed text matching the head of the ghost text, re-render the
+---remaining suffix instead of discarding the suggestion (Copilot-style
+---retention). Saves a full LLM round-trip per matching keystroke.
+---@return boolean true if the suggestion was advanced and is still visible
+function M.try_advance()
+  local s = M.current_suggestion
+  if not s or s.is_remote then
+    return false
+  end
+
+  local buf = vim.api.nvim_get_current_buf()
+  if buf ~= s.buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+
+  local cur = vim.api.nvim_win_get_cursor(0)
+  local r, c = cur[1] - 1, cur[2]
+
+  -- Must be on the same row, at or right of the anchor
+  if r ~= s.row or c < s.col then
+    return false
+  end
+  if c == s.col then
+    return true -- No movement; suggestion unchanged
+  end
+
+  local line = vim.api.nvim_buf_get_lines(buf, r, r + 1, false)[1] or ""
+  local typed = line:sub(s.col + 1, c)
+  local first = s.lines[1]
+
+  -- Typed past the first suggestion line, or mismatch: give up
+  if #typed > #first or first:sub(1, #typed) ~= typed then
+    return false
+  end
+
+  local remaining_first = first:sub(#typed + 1)
+
+  -- Fully consumed single-line suggestion: clear, let a fresh fetch happen
+  if remaining_first == "" and #s.lines == 1 then
+    Log.debug("ui.try_advance: suggestion fully consumed")
+    M.clear()
+    return false
+  end
+
+  local new_lines = { remaining_first }
+  for i = 2, #s.lines do
+    table.insert(new_lines, s.lines[i])
+  end
+
+  Log.debug("ui.try_advance: consumed %d chars, %d remaining", #typed, #remaining_first)
+  M.render(table.concat(new_lines, "\n"), r, c, buf)
+  return true
+end
+
 ---Define highlight groups (called on setup and colorscheme change)
 ---Uses default=true so users can override these in their config
 local function _define_highlights()

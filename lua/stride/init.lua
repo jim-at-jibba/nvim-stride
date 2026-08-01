@@ -171,6 +171,13 @@ function M.setup(opts)
         return
       end
 
+      -- Retention: if typed chars match the ghost text head, consume them
+      -- instead of discarding and refetching
+      if Ui.try_advance() then
+        Log.debug("TextChangedI: suggestion advanced, no refetch")
+        return
+      end
+
       Log.debug("TextChangedI: triggered, scheduling V1 prediction")
       Ui.clear()
       Client.cancel()
@@ -187,10 +194,15 @@ function M.setup(opts)
     end,
   })
 
-  -- Clear on cursor move (in insert mode)
+  -- Clear on cursor move (in insert mode), unless the cursor is consistent
+  -- with the current suggestion anchor (i.e., movement came from typing
+  -- characters the suggestion already predicted)
   vim.api.nvim_create_autocmd("CursorMovedI", {
     group = augroup,
     callback = function()
+      if Ui.try_advance() then
+        return
+      end
       Ui.clear()
       Client.cancel()
     end,

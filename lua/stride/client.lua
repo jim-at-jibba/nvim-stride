@@ -7,6 +7,39 @@ local Transport = require("stride.transport")
 ---Channel name for completion requests
 local CHANNEL = "completion"
 
+---Completion cache. Requests use temperature=0, so identical context yields
+---an identical completion: caching is deterministic and safe.
+---@type table<string, string> key -> cleaned completion
+local _cache = {}
+---@type string[] FIFO of cache keys for eviction
+local _cache_keys = {}
+local CACHE_MAX = 50
+
+---@param context Stride.Context
+---@return string
+local function _cache_key(context)
+  return vim.fn.sha256(context.filetype .. "\1" .. context.prefix .. "\1" .. context.suffix)
+end
+
+---@param key string
+---@param content string
+local function _cache_put(key, content)
+  if _cache[key] == nil then
+    table.insert(_cache_keys, key)
+    if #_cache_keys > CACHE_MAX then
+      local evicted = table.remove(_cache_keys, 1)
+      _cache[evicted] = nil
+    end
+  end
+  _cache[key] = content
+end
+
+---Clear the completion cache (for testing)
+function M._clear_cache()
+  _cache = {}
+  _cache_keys = {}
+end
+
 ---Cancel any in-flight request
 function M.cancel()
   Transport.cancel(CHANNEL)
@@ -144,6 +177,15 @@ end
 ---@param context Stride.Context
 ---@param callback fun(text: string, row: number, col: number, buf: number)
 function M.fetch_prediction(context, callback)
+  -- Cache hit: render immediately, no request
+  local cache_key = _cache_key(context)
+  local cached = _cache[cache_key]
+  if cached then
+    Log.debug("client: cache hit, skipping request")
+    callback(cached, context.row, context.col, context.buf)
+    return
+  end
+
   -- Context is already windowed by utils.get_context (context_lines +
   -- treesitter expansion). Apply only a char-budget safety cap here so
   -- pathological files (minified JS, huge lines) can't blow up the prompt.
@@ -219,6 +261,8 @@ function M.fetch_prediction(context, callback)
       if not cleaned then
         return
       end
+
+      _cache_put(cache_key, cleaned)
 
       Log.debug("client: final content: %s", cleaned)
       callback(cleaned, r, c, request_buf)
