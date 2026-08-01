@@ -20,23 +20,16 @@ local M = {}
 local Config = require("stride.config")
 local History = require("stride.history")
 local Log = require("stride.log")
-local curl = require("plenary.curl")
+local Transport = require("stride.transport")
 local ContextModule = require("stride.context")
 local Treesitter = require("stride.treesitter")
 
----@type table|nil Current active job handle
-M._active_job = nil
-
----@type number Request ID to detect stale callbacks
-M._request_id = 0
+---Channel name for predictor requests
+local CHANNEL = "predictor"
 
 ---Cancel any in-flight prediction request
 function M.cancel()
-  if M._active_job then
-    Log.debug("predictor.cancel: invalidating request id=%d", M._request_id)
-    M._request_id = M._request_id + 1
-    M._active_job = nil
-  end
+  Transport.cancel(CHANNEL)
 end
 
 ---Find all occurrences of text in buffer
@@ -455,10 +448,6 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
     return
   end
 
-  M._request_id = M._request_id + 1
-  local current_request_id = M._request_id
-  local start_time = vim.loop.hrtime()
-
   -- Build structured prompt with XML tags
   local user_prompt = _build_structured_prompt(ctx, changes_text)
 
@@ -476,53 +465,14 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
   }
 
   Log.debug("===== PREDICTOR REQUEST =====")
-  Log.debug("request_id=%d", current_request_id)
   Log.debug("cursor: line=%d col=%d", ctx.cursor.row, ctx.cursor.col)
   Log.debug("context: %s", ctx.file_path)
   Log.debug("user_prompt:\n%s", user_prompt)
 
-  M._active_job = curl.post(Config.options.endpoint, {
-    body = vim.fn.json_encode(payload),
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["Authorization"] = "Bearer " .. Config.options.api_key,
-    },
-    callback = vim.schedule_wrap(function(out)
-      local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
-
-      Log.debug("===== PREDICTOR RESPONSE =====")
-      Log.debug("request_id=%d elapsed=%.0fms", current_request_id, elapsed_ms)
-
-      -- Check if request was cancelled
-      if current_request_id ~= M._request_id then
-        Log.debug("predictor: request cancelled")
-        return
-      end
-
-      M._active_job = nil
-
-      if not out or out.status >= 400 then
-        Log.debug("predictor: API error status=%s", tostring(out and out.status))
-        callback(nil)
-        return
-      end
-
-      Log.debug("predictor: raw response: %s", out.body or "(empty)")
-
-      local ok, decoded = pcall(vim.fn.json_decode, out.body)
-      if not ok then
-        Log.debug("predictor: failed to decode API response")
-        callback(nil)
-        return
-      end
-
-      if not decoded.choices or not decoded.choices[1] then
-        Log.debug("predictor: no choices in response")
-        callback(nil)
-        return
-      end
-
-      local content = decoded.choices[1].message and decoded.choices[1].message.content or ""
+  Transport.request({
+    channel = CHANNEL,
+    payload = payload,
+    on_result = function(content)
       Log.debug("predictor: LLM content: %s", content)
 
       -- Strip markdown code fences if present
@@ -551,10 +501,12 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
       end
 
       callback(suggestion)
-    end),
+    end,
+    on_error = function(kind, status)
+      Log.debug("predictor: request failed kind=%s status=%s", kind, tostring(status))
+      callback(nil)
+    end,
   })
-
-  Log.debug("predictor: request dispatched")
 end
 
 return M

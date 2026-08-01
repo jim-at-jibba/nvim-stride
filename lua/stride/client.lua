@@ -2,27 +2,14 @@ local M = {}
 
 local Config = require("stride.config")
 local Log = require("stride.log")
-local curl = require("plenary.curl")
+local Transport = require("stride.transport")
 
----@type {[1]: number, [2]: number}|nil Current request cursor position for stale check
-M.active_request_cursor = nil
-
----@type table|nil Current active job handle
-M.active_job = nil
-
----@type number Request ID to detect stale callbacks
-M._request_id = 0
-
----@type string|nil Last prefix sent (for echo detection)
-M._last_prefix = nil
+---Channel name for completion requests
+local CHANNEL = "completion"
 
 ---Cancel any in-flight request
 function M.cancel()
-  if M.active_job then
-    Log.debug("cancel: invalidating request id=%d", M._request_id)
-    M._request_id = M._request_id + 1 -- Invalidate current request
-    M.active_job = nil
-  end
+  Transport.cancel(CHANNEL)
 end
 
 ---Truncate text to last N lines
@@ -83,34 +70,7 @@ local function _is_echo_response(response, prefix, suffix)
   return false
 end
 
----Internal fetch with retry logic
----@param context Stride.Context
----@param callback fun(text: string, row: number, col: number, buf: number)
----@param attempt number|nil
-local function _do_fetch(context, callback, attempt)
-  attempt = attempt or 1
-  local max_retries = 3
-  local start_time = vim.loop.hrtime()
-
-  if not Config.options.api_key then
-    Log.error("CEREBRAS_API_KEY not set")
-    vim.notify("stride.nvim: CEREBRAS_API_KEY not set", vim.log.levels.ERROR, { title = "stride.nvim" })
-    return
-  end
-
-  M._request_id = M._request_id + 1
-  local current_request_id = M._request_id
-  M.active_request_cursor = { context.row, context.col }
-  local request_buf = context.buf
-
-  -- Truncate context for the prompt (keep full context for echo detection)
-  local prompt_prefix = _truncate_end(context.prefix, 30)
-  local prompt_suffix = _truncate_start(context.suffix, 15)
-
-  -- Store for echo detection
-  M._last_prefix = context.prefix
-
-  local system_prompt = [[You are a code completion engine. Predict what the user will type next.
+local SYSTEM_PROMPT = [[You are a code completion engine. Predict what the user will type next.
 
 Rules:
 - Output ONLY the characters to insert at cursor position
@@ -123,10 +83,68 @@ Rules:
 - Do NOT include markdown, code fences, or explanations
 - Output empty string if no meaningful completion]]
 
+---Process raw LLM output into a renderable completion
+---@param content string Raw model output
+---@param context Stride.Context
+---@param row number 0-indexed cursor row
+---@return string|nil Cleaned completion, or nil if rejected
+local function _postprocess(content, context, row)
+  -- Strip markdown code fences if present
+  local cleaned = content
+  cleaned = cleaned:gsub("^%s*```[%w]*%s*\n?", "")
+  cleaned = cleaned:gsub("\n?%s*```%s*$", "")
+  if cleaned ~= content then
+    Log.debug("client: stripped markdown fences")
+    content = cleaned
+  end
+
+  -- Strip leading/trailing whitespace
+  content = content:gsub("^%s+", ""):gsub("%s+$", "")
+
+  if content == "" then
+    return nil
+  end
+
+  -- Comment-to-code: if cursor is at end of full-line comment and
+  -- suggestion is code (not comment continuation), prepend newline with indent
+  local Treesitter = require("stride.treesitter")
+  if Treesitter.is_full_line_comment(context.buf, row) then
+    local current_line = vim.api.nvim_buf_get_lines(context.buf, row, row + 1, false)[1] or ""
+    local indent = current_line:match("^(%s*)") or ""
+
+    local is_comment_continuation = content:match("^//")
+      or content:match("^#")
+      or content:match("^%-%-")
+      or content:match("^/%*")
+      or content:match("^%*")
+
+    if not is_comment_continuation then
+      content = "\n" .. indent .. content
+      Log.debug("client: comment-to-code, prepended newline with indent '%s'", indent)
+    end
+  end
+
+  -- Echo detection: reject if response contains context
+  if _is_echo_response(content, context.prefix, context.suffix) then
+    Log.debug("client: REJECTED echo response")
+    return nil
+  end
+
+  return content
+end
+
+---Fetch prediction from the LLM
+---@param context Stride.Context
+---@param callback fun(text: string, row: number, col: number, buf: number)
+function M.fetch_prediction(context, callback)
+  -- Truncate context for the prompt
+  local prompt_prefix = _truncate_end(context.prefix, 30)
+  local prompt_suffix = _truncate_start(context.suffix, 15)
+
   local agent_section = ""
   if context.agent_context then
     agent_section = string.format("<AgentContext>\n%s\n</AgentContext>\n\n", context.agent_context)
-    Log.debug("including agent_context (%d chars)", #context.agent_context)
+    Log.debug("client: including agent_context (%d chars)", #context.agent_context)
   end
 
   local user_prompt = string.format(
@@ -145,202 +163,56 @@ Rules:
     prompt_suffix
   )
 
-  local messages = {
-    { role = "system", content = system_prompt },
-    { role = "user", content = user_prompt },
-  }
-
   local payload = {
     model = Config.options.model,
-    messages = messages,
+    messages = {
+      { role = "system", content = SYSTEM_PROMPT },
+      { role = "user", content = user_prompt },
+    },
     temperature = 0,
     max_tokens = 128,
     stop = { "<|eot_id|>", "<|end_of_text|>" },
     reasoning_effort = "low",
   }
 
-  Log.debug("===== API REQUEST START =====")
-  Log.debug("request_id=%d attempt=%d/%d", current_request_id, attempt, max_retries)
-  Log.debug("endpoint=%s model=%s", Config.options.endpoint, Config.options.model)
+  Log.debug("===== COMPLETION REQUEST =====")
   Log.debug("context: buf=%d row=%d col=%d ft=%s", context.buf, context.row, context.col, context.filetype)
-  Log.debug("prompt_prefix (%d chars, truncated from %d):\n%s", #prompt_prefix, #context.prefix, prompt_prefix)
-  Log.debug("prompt_suffix (%d chars, truncated from %d):\n%s", #prompt_suffix, #context.suffix, prompt_suffix)
-  Log.debug("payload: temp=%.1f max_tokens=%d", payload.temperature, payload.max_tokens)
+  Log.debug("prompt_prefix (%d chars):\n%s", #prompt_prefix, prompt_prefix)
+  Log.debug("prompt_suffix (%d chars):\n%s", #prompt_suffix, prompt_suffix)
 
-  local body = vim.fn.json_encode(payload)
+  local request_buf = context.buf
+  local request_row = context.row
+  local request_col = context.col
 
-  M.active_job = curl.post(Config.options.endpoint, {
-    body = body,
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["Authorization"] = "Bearer " .. Config.options.api_key,
-    },
-    callback = vim.schedule_wrap(function(out)
-      local elapsed_ms = (vim.loop.hrtime() - start_time) / 1e6
-
-      Log.debug("===== API RESPONSE =====")
-      Log.debug("request_id=%d elapsed=%.0fms", current_request_id, elapsed_ms)
-
-      -- Check if this request was cancelled
-      if current_request_id ~= M._request_id then
-        Log.debug("DISCARDED: request cancelled (current_id=%d, this_id=%d)", M._request_id, current_request_id)
-        return
-      end
-
-      M.active_job = nil
-
-      if not out then
-        Log.debug("ERROR: no response object (network failure?)")
-      else
-        Log.debug("status=%d body_len=%d", out.status or -1, #(out.body or ""))
-      end
-
-      -- Network/server error (5xx) - retry with exponential backoff
-      if not out or out.status >= 500 then
-        Log.debug(
-          "SERVER ERROR: status=%s, will retry=%s",
-          tostring(out and out.status),
-          tostring(attempt < max_retries)
-        )
-        if out and out.body then
-          Log.debug("error body: %s", out.body)
-        end
-        if attempt < max_retries then
-          local delay = 100 * attempt
-          Log.debug("retrying in %dms", delay)
-          vim.defer_fn(function()
-            _do_fetch(context, callback, attempt + 1)
-          end, delay)
-        else
-          Log.warn("API request failed after %d attempts", max_retries)
-          vim.notify(
-            "stride.nvim: API request failed after " .. max_retries .. " attempts",
-            vim.log.levels.WARN,
-            { title = "stride.nvim" }
-          )
-        end
-        return
-      end
-
-      -- Client error (4xx) - don't retry
-      if out.status >= 400 then
-        Log.debug("CLIENT ERROR: status=%d", out.status)
-        Log.debug("error body: %s", out.body or "(empty)")
-        local msg = "stride.nvim: API error " .. out.status
-        if out.status == 401 then
-          msg = "stride.nvim: Invalid API key"
-        end
-        if out.status == 429 then
-          msg = "stride.nvim: Rate limited"
-        end
-        vim.notify(msg, vim.log.levels.WARN, { title = "stride.nvim" })
-        return
-      end
-
+  Transport.request({
+    channel = CHANNEL,
+    payload = payload,
+    on_result = function(content)
       -- STALE CHECK: Did cursor move or buffer change?
       local cur_buf = vim.api.nvim_get_current_buf()
       if cur_buf ~= request_buf then
-        Log.debug("DISCARDED: buffer changed (was=%d now=%d)", request_buf, cur_buf)
+        Log.debug("client: DISCARDED, buffer changed (was=%d now=%d)", request_buf, cur_buf)
         return
       end
 
       local cur = vim.api.nvim_win_get_cursor(0)
       local r, c = cur[1] - 1, cur[2]
-      if M.active_request_cursor[1] ~= r or M.active_request_cursor[2] ~= c then
-        Log.debug(
-          "DISCARDED: cursor moved (was=%d,%d now=%d,%d)",
-          M.active_request_cursor[1],
-          M.active_request_cursor[2],
-          r,
-          c
-        )
+      if request_row ~= r or request_col ~= c then
+        Log.debug("client: DISCARDED, cursor moved (was=%d,%d now=%d,%d)", request_row, request_col, r, c)
         return
       end
 
-      Log.debug("raw response body: %s", out.body or "(empty)")
+      Log.debug("client: raw completion:\n%s", content)
 
-      local ok, decoded = pcall(vim.fn.json_decode, out.body)
-      if not ok then
-        Log.debug("JSON PARSE ERROR: %s", tostring(decoded))
+      local cleaned = _postprocess(content, context, r)
+      if not cleaned then
         return
       end
 
-      if not decoded.choices or not decoded.choices[1] then
-        Log.debug("INVALID RESPONSE: no choices array")
-        Log.debug("decoded: %s", vim.inspect(decoded))
-        return
-      end
-
-      local choice = decoded.choices[1]
-      local content = choice.message and choice.message.content or ""
-      local finish_reason = choice.finish_reason or "unknown"
-
-      Log.debug("SUCCESS: finish_reason=%s content_len=%d", finish_reason, #content)
-      Log.debug("raw completion text:\n%s", content)
-
-      -- Strip markdown code fences if present
-      local cleaned = content
-      cleaned = cleaned:gsub("^%s*```[%w]*%s*\n?", "")
-      cleaned = cleaned:gsub("\n?%s*```%s*$", "")
-
-      if cleaned ~= content then
-        Log.debug("stripped markdown fences, cleaned:\n%s", cleaned)
-        content = cleaned
-      end
-
-      -- Strip leading/trailing whitespace
-      content = content:gsub("^%s+", ""):gsub("%s+$", "")
-
-      -- Comment-to-code: if cursor is at end of full-line comment and
-      -- suggestion is code (not comment continuation), prepend newline with indent
-      local Treesitter = require("stride.treesitter")
-      if Treesitter.is_full_line_comment(request_buf, r) then
-        local current_line = vim.api.nvim_buf_get_lines(request_buf, r, r + 1, false)[1] or ""
-        local indent = current_line:match("^(%s*)") or ""
-
-        -- Check if suggestion is a comment continuation
-        local is_comment_continuation = content:match("^//")
-          or content:match("^#")
-          or content:match("^%-%-")
-          or content:match("^/%*")
-          or content:match("^%*")
-
-        if not is_comment_continuation then
-          content = "\n" .. indent .. content
-          Log.debug("comment-to-code: prepended newline with indent '%s'", indent)
-        end
-      end
-
-      -- Echo detection: reject if response contains context
-      if _is_echo_response(content, context.prefix, context.suffix) then
-        Log.debug("REJECTED: response appears to echo context")
-        return
-      end
-
-      if decoded.usage then
-        Log.debug(
-          "usage: prompt_tokens=%d completion_tokens=%d total=%d",
-          decoded.usage.prompt_tokens or 0,
-          decoded.usage.completion_tokens or 0,
-          decoded.usage.total_tokens or 0
-        )
-      end
-
-      Log.debug("===== CALLING UI RENDER =====")
-      Log.debug("final content: %s", content)
-      callback(content, r, c, request_buf)
-    end),
+      Log.debug("client: final content: %s", cleaned)
+      callback(cleaned, r, c, request_buf)
+    end,
   })
-
-  Log.debug("request dispatched, job=%s", tostring(M.active_job))
-end
-
----Fetch prediction from Cerebras API
----@param context Stride.Context
----@param callback fun(text: string, row: number, col: number, buf: number)
-function M.fetch_prediction(context, callback)
-  M.cancel() -- Cancel any in-flight request
-  _do_fetch(context, callback)
 end
 
 return M

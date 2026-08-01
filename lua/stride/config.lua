@@ -28,6 +28,8 @@
 ---@field sign? Stride.SignConfig|false Gutter sign config (false to disable)
 ---@field context_files? string[]|false  Files to read for project context (default: false)
 ---@field notify? Stride.NotifyConfig|false Notification config (false to disable)
+---@field min_request_interval_ms? number Min interval between any two API requests (default: 500)
+---@field rate_limit_cooldown_ms? number Pause after a 429 without Retry-After header (default: 15000)
 
 local M = {}
 
@@ -132,6 +134,8 @@ M.defaults = {
     hl = "StrideSign",
   },
   context_files = false,
+  min_request_interval_ms = 500,
+  rate_limit_cooldown_ms = 15000,
   notify = {
     enabled = true,
     timeout = 2000,
