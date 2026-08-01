@@ -12,37 +12,44 @@ function M.cancel()
   Transport.cancel(CHANNEL)
 end
 
----Truncate text to last N lines
+---Trim prefix to a char budget, cutting at a line boundary from the start
 ---@param text string
----@param max_lines number
+---@param max_chars number
 ---@return string
-local function _truncate_end(text, max_lines)
-  local lines = vim.split(text, "\n")
-  if #lines <= max_lines then
+local function _cap_prefix(text, max_chars)
+  if #text <= max_chars then
     return text
   end
-  local start_idx = #lines - max_lines + 1
-  local truncated = {}
-  for i = start_idx, #lines do
-    table.insert(truncated, lines[i])
+  local trimmed = text:sub(-max_chars)
+  -- Drop the (likely partial) first line
+  local nl = trimmed:find("\n", 1, true)
+  if nl then
+    trimmed = trimmed:sub(nl + 1)
   end
-  return table.concat(truncated, "\n")
+  return trimmed
 end
 
----Truncate text to first N lines
+---Trim suffix to a char budget, cutting at a line boundary from the end
 ---@param text string
----@param max_lines number
+---@param max_chars number
 ---@return string
-local function _truncate_start(text, max_lines)
-  local lines = vim.split(text, "\n")
-  if #lines <= max_lines then
+local function _cap_suffix(text, max_chars)
+  if #text <= max_chars then
     return text
   end
-  local truncated = {}
-  for i = 1, max_lines do
-    table.insert(truncated, lines[i])
+  local trimmed = text:sub(1, max_chars)
+  -- Drop the (likely partial) last line
+  local last_nl
+  for i = #trimmed, 1, -1 do
+    if trimmed:sub(i, i) == "\n" then
+      last_nl = i
+      break
+    end
   end
-  return table.concat(truncated, "\n")
+  if last_nl then
+    trimmed = trimmed:sub(1, last_nl - 1)
+  end
+  return trimmed
 end
 
 ---Check if response is echoing the context
@@ -137,9 +144,13 @@ end
 ---@param context Stride.Context
 ---@param callback fun(text: string, row: number, col: number, buf: number)
 function M.fetch_prediction(context, callback)
-  -- Truncate context for the prompt
-  local prompt_prefix = _truncate_end(context.prefix, 30)
-  local prompt_suffix = _truncate_start(context.suffix, 15)
+  -- Context is already windowed by utils.get_context (context_lines +
+  -- treesitter expansion). Apply only a char-budget safety cap here so
+  -- pathological files (minified JS, huge lines) can't blow up the prompt.
+  -- Prefix gets 2/3 of the budget: what comes before the cursor matters most.
+  local max_chars = Config.options.max_context_chars or 9000
+  local prompt_prefix = _cap_prefix(context.prefix, math.floor(max_chars * 2 / 3))
+  local prompt_suffix = _cap_suffix(context.suffix, math.floor(max_chars / 3))
 
   local agent_section = ""
   if context.agent_context then

@@ -30,6 +30,7 @@
 ---@field notify? Stride.NotifyConfig|false Notification config (false to disable)
 ---@field min_request_interval_ms? number Min interval between any two API requests (default: 500)
 ---@field rate_limit_cooldown_ms? number Pause after a 429 without Retry-After header (default: 15000)
+---@field max_context_chars? number Char budget for completion prompt context (default: 9000)
 
 local M = {}
 
@@ -136,6 +137,7 @@ M.defaults = {
   context_files = false,
   min_request_interval_ms = 500,
   rate_limit_cooldown_ms = 15000,
+  max_context_chars = 9000,
   notify = {
     enabled = true,
     timeout = 2000,
