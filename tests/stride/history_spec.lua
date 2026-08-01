@@ -49,6 +49,93 @@ describe("history._word_diff", function()
   end
 end)
 
+describe("history._splice", function()
+  local History = require("stride.history")
+
+  it("replaces lines in place when counts match", function()
+    local state = { "a", "b", "c" }
+    History._splice(state, 2, 1, { "B" })
+    assert.same({ "a", "B", "c" }, state)
+  end)
+
+  it("shrinks state when lines are deleted", function()
+    local state = { "a", "b", "c", "d" }
+    History._splice(state, 2, 2, { "X" })
+    assert.same({ "a", "X", "d" }, state)
+  end)
+
+  it("grows state when lines are added", function()
+    local state = { "a", "b" }
+    History._splice(state, 2, 1, { "x", "y", "z" })
+    assert.same({ "a", "x", "y", "z" }, state)
+  end)
+
+  it("handles pure deletion", function()
+    local state = { "a", "b", "c" }
+    History._splice(state, 2, 2, {})
+    assert.same({ "a" }, state)
+  end)
+end)
+
+describe("history incremental buffer state", function()
+  local History = require("stride.history")
+  local Config = require("stride.config")
+  local buf
+  local tmpfile
+
+  before_each(function()
+    Config.setup({ api_key = "test" })
+    History.clear()
+    tmpfile = vim.fn.tempname() .. ".lua"
+    vim.fn.writefile({ "line one", "line two", "line three" }, tmpfile)
+    vim.cmd("edit " .. tmpfile)
+    buf = vim.api.nvim_get_current_buf()
+    History.attach_buffer(buf)
+  end)
+
+  after_each(function()
+    History.clear()
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    pcall(vim.fn.delete, tmpfile)
+    History._attached_buffers = {}
+    History._buffer_states = {}
+  end)
+
+  local function assert_state_synced()
+    assert.same(vim.api.nvim_buf_get_lines(buf, 0, -1, false), History._buffer_states[buf])
+  end
+
+  it("keeps state in sync through single-line edits", function()
+    vim.api.nvim_buf_set_text(buf, 0, 5, 0, 8, { "ONE" })
+    assert_state_synced()
+  end)
+
+  it("keeps state in sync through line insertion", function()
+    vim.api.nvim_buf_set_lines(buf, 1, 1, false, { "inserted a", "inserted b" })
+    assert_state_synced()
+  end)
+
+  it("keeps state in sync through line deletion", function()
+    vim.api.nvim_buf_set_lines(buf, 0, 2, false, {})
+    assert_state_synced()
+  end)
+
+  it("keeps state in sync through mixed sequential edits", function()
+    vim.api.nvim_buf_set_text(buf, 0, 0, 0, 4, { "LINE" })
+    vim.api.nvim_buf_set_lines(buf, 2, 3, false, { "replaced", "extra" })
+    vim.api.nvim_buf_set_lines(buf, 0, 1, false, {})
+    assert_state_synced()
+  end)
+
+  it("records changes from buffer edits", function()
+    vim.api.nvim_buf_set_text(buf, 0, 5, 0, 8, { "ONE" })
+    assert.is_true(History.get_change_count() > 0)
+    local changes = History.get_changes()
+    assert.equals("line one", changes[1].old_text)
+    assert.equals("line ONE", changes[1].new_text)
+  end)
+end)
+
 describe("history._format_change_as_diff", function()
   local History = require("stride.history")
 

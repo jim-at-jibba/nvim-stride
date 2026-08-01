@@ -105,6 +105,28 @@ function M.record_change(change)
   )
 end
 
+---Splice replacement lines into a stored buffer state in place.
+---@param state string[] Stored buffer lines (1-indexed)
+---@param start_idx number 1-indexed position of the first replaced line
+---@param old_count number Number of lines being replaced
+---@param repl string[] Replacement lines
+function M._splice(state, start_idx, old_count, repl)
+  local new_count = #repl
+  local overlap = math.min(old_count, new_count)
+  for i = 1, overlap do
+    state[start_idx + i - 1] = repl[i]
+  end
+  if old_count > new_count then
+    for _ = 1, old_count - new_count do
+      table.remove(state, start_idx + new_count)
+    end
+  else
+    for i = old_count + 1, new_count do
+      table.insert(state, start_idx + i - 1, repl[i])
+    end
+  end
+end
+
 ---Attach change tracking to a buffer
 ---@param buf number Buffer handle
 function M.attach_buffer(buf)
@@ -132,37 +154,50 @@ function M.attach_buffer(buf)
   M._buffer_states[buf] = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
   local ok = vim.api.nvim_buf_attach(buf, false, {
-    on_bytes = function(_, b, _, start_row, start_col, _, old_end_row, old_end_col, _, new_end_row, new_end_col)
-      -- Skip if buffer state not tracked (shouldn't happen but be safe)
-      if not M._buffer_states[b] then
+    on_bytes = function(_, b, _, start_row, start_col, _, old_end_row, old_end_col, _, new_end_row, new_end_col, _)
+      local state = M._buffer_states[b]
+      if not state then
         return
       end
 
-      local old_lines = M._buffer_states[b]
-      local new_lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
+      -- Only touch the affected rows: slice old lines from stored state,
+      -- fetch new lines from the buffer, and splice the state in place.
+      -- (Previously this copied the entire buffer on every keystroke.)
+      local old_count = old_end_row + 1
+      local new_count = new_end_row + 1
 
-      -- For single-line edits, track full line content for better context
+      local old_slice = {}
+      for i = 1, old_count do
+        old_slice[i] = state[start_row + i] or ""
+      end
+
+      local new_slice = vim.api.nvim_buf_get_lines(b, start_row, start_row + new_count, false)
+
       local is_single_line = old_end_row == 0 and new_end_row == 0
       local old_text, new_text
 
       if is_single_line then
-        -- Track full line content (trimmed) for single-line changes
-        local old_line = old_lines[start_row + 1] or ""
-        local new_line = new_lines[start_row + 1] or ""
-        old_text = old_line
-        new_text = new_line
+        -- Track full line content for single-line changes (better context)
+        old_text = old_slice[1] or ""
+        new_text = new_slice[1] or ""
       else
-        -- Multi-line changes: extract the specific changed region
-        old_text = M._extract_text(old_lines, start_row, start_col, start_row + old_end_row, start_col + old_end_col)
-        new_text = M._extract_text(new_lines, start_row, start_col, start_row + new_end_row, start_col + new_end_col)
+        -- Multi-line changes: extract the specific changed region.
+        -- on_bytes end cols are relative to start_col only when the end
+        -- row equals the start row.
+        local old_e_col = old_end_row == 0 and (start_col + old_end_col) or old_end_col
+        local new_e_col = new_end_row == 0 and (start_col + new_end_col) or new_end_col
+        old_text = M._extract_text(old_slice, 0, start_col, old_end_row, old_e_col)
+        new_text = M._extract_text(new_slice, 0, start_col, new_end_row, new_e_col)
       end
+
+      -- Keep stored state in sync regardless of whether we record
+      M._splice(state, start_row + 1, old_count, new_slice)
 
       -- Only record if there's actual text change
       if old_text ~= new_text then
         -- Skip changes inside comments or strings
         if Treesitter.is_inside_comment_or_string(b, start_row, start_col) then
           Log.debug("history: skipping change in comment/string at line %d", start_row + 1)
-          M._buffer_states[b] = new_lines
           return
         end
 
@@ -179,9 +214,12 @@ function M.attach_buffer(buf)
           timestamp = os.time(),
         })
       end
+    end,
 
-      -- Update stored state
-      M._buffer_states[b] = new_lines
+    on_reload = function(_, b)
+      -- Buffer reloaded from disk: re-snapshot
+      M._buffer_states[b] = vim.api.nvim_buf_get_lines(b, 0, -1, false)
+      Log.debug("history: re-snapshotted buffer %d after reload", b)
     end,
 
     on_detach = function(_, b)
