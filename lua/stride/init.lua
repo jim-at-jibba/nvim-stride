@@ -337,6 +337,18 @@ function M.setup(opts)
     return M.accept()
   end, { expr = true, silent = true })
 
+  -- Partial accepts: word and line (insert mode only)
+  if Config.options.accept_word_keymap then
+    vim.keymap.set("i", Config.options.accept_word_keymap, function()
+      return M.accept_word()
+    end, { expr = true, silent = true, desc = "Stride: accept next word of suggestion" })
+  end
+  if Config.options.accept_line_keymap then
+    vim.keymap.set("i", Config.options.accept_line_keymap, function()
+      return M.accept_line()
+    end, { expr = true, silent = true, desc = "Stride: accept first line of suggestion" })
+  end
+
   -- Create :StrideClear command
   vim.api.nvim_create_user_command("StrideClear", function()
     History.clear()
@@ -391,6 +403,45 @@ function M.setup(opts)
     Config.options.debounce_ms,
     Config.options.mode
   )
+end
+
+---Accept a partial piece of the current local suggestion.
+---The buffer insert triggers the retention path (Ui.try_advance) via
+---autocmds, which shrinks the ghost text to the remaining suffix.
+---@param kind "word"|"line"
+---@return string
+local function _accept_partial(kind)
+  local part = Ui.partial_text(kind)
+  local s = Ui.current_suggestion
+  if not part or not s then
+    Log.debug("accept_%s: no suggestion, ignoring", kind)
+    return ""
+  end
+
+  local buf, r, c = s.buf, s.row, s.col
+  Log.debug("accept_%s: inserting %d chars at row=%d col=%d", kind, #part, r, c)
+
+  vim.schedule(function()
+    if not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_get_current_buf() ~= buf then
+      return
+    end
+    vim.api.nvim_buf_set_text(buf, r, c, r, c, { part })
+    vim.api.nvim_win_set_cursor(0, { r + 1, c + #part })
+  end)
+
+  return ""
+end
+
+---Accept the next word of the current suggestion
+---@return string
+function M.accept_word()
+  return _accept_partial("word")
+end
+
+---Accept the first line of the current suggestion
+---@return string
+function M.accept_line()
+  return _accept_partial("line")
 end
 
 ---Accept current suggestion (V1 local or V2 remote)

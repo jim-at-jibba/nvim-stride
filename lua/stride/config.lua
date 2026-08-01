@@ -14,6 +14,8 @@
 ---@field debounce_ms? number Debounce delay in milliseconds (insert mode)
 ---@field debounce_normal_ms? number Debounce delay for normal mode edits (default: 500)
 ---@field accept_keymap? string Keymap to accept suggestion
+---@field accept_word_keymap? string|false Keymap to accept next word of suggestion (default: "<M-w>", false to disable)
+---@field accept_line_keymap? string|false Keymap to accept first line of suggestion (default: "<M-l>", false to disable)
 ---@field dismiss_keymap? string Keymap to dismiss suggestion (default: "<Esc>")
 ---@field context_lines? number Base context window size (lines before/after cursor)
 ---@field use_treesitter? boolean Use Treesitter for smart context expansion
@@ -42,6 +44,8 @@ M.defaults = {
   debounce_ms = 300,
   debounce_normal_ms = 500,
   accept_keymap = "<Tab>",
+  accept_word_keymap = "<M-w>",
+  accept_line_keymap = "<M-l>",
   dismiss_keymap = "<Esc>",
   context_lines = 30,
   use_treesitter = true,

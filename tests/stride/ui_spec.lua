@@ -89,4 +89,25 @@ describe("ui.try_advance", function()
     assert.is_true(Ui.try_advance())
     assert.equals(" then\n  return x\nend", Ui.current_suggestion.text)
   end)
+
+  describe("partial_text", function()
+    it("returns nil without a suggestion", function()
+      assert.is_nil(Ui.partial_text("word"))
+    end)
+
+    local cases = {
+      { text = "compute_total(items)", word = "compute_total", line = "compute_total(items)" },
+      { text = "  return value", word = "  return", line = "  return value" },
+      { text = "= require('foo')", word = "=", line = "= require('foo')" },
+      { text = "foo()\nbar()", word = "foo", line = "foo()" },
+    }
+
+    for _, t in ipairs(cases) do
+      it(string.format("extracts from %q", t.text), function()
+        Ui.render(t.text, 0, 10, buf)
+        assert.equals(t.word, Ui.partial_text("word"))
+        assert.equals(t.line, Ui.partial_text("line"))
+      end)
+    end
+  end)
 end)

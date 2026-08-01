@@ -304,6 +304,28 @@ function M.get_ns_id()
   return ns_id
 end
 
+---Get the partial text a word/line accept would insert.
+---@param kind "word"|"line"
+---@return string|nil Partial text, or nil if no local suggestion available
+function M.partial_text(kind)
+  local s = M.current_suggestion
+  if not s or s.is_remote or not s.lines then
+    return nil
+  end
+
+  local first = s.lines[1]
+  if first == "" then
+    return nil
+  end
+
+  if kind == "line" then
+    return first
+  end
+
+  -- Word: leading whitespace + a word-char run, or a punctuation run
+  return first:match("^%s*[%w_]+") or first:match("^%s*[^%s%w_]+") or first
+end
+
 ---Try to advance the current local suggestion by consuming typed characters.
 ---If the user typed text matching the head of the ghost text, re-render the
 ---remaining suffix instead of discarding the suggestion (Copilot-style
