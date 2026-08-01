@@ -17,10 +17,10 @@ from datetime import datetime
 # 3. Press Tab to accept each suggestion
 # -----------------------------------------------------------------------------
 
-username = "alice"
-user_email = f"{username}@example.com"
-print(f"Hello, {username}!")
-greeting = f"Welcome, {username}!"
+username_what = "alice"
+user_email = f"{username_what}@example.com"
+print(f"Hello, {username_what}!")
+greeting = f"Welcome, {username_what}!"
 
 
 # -----------------------------------------------------------------------------
@@ -30,13 +30,13 @@ greeting = f"Welcome, {username}!"
 # -----------------------------------------------------------------------------
 
 
-def calculate_total(items: list[float], tax_rate: float = 0.1) -> float:
+def compute_total(items: list[float], tax_rate: float = 0.1) -> float:
     subtotal = sum(items)
     return subtotal + (subtotal * tax_rate)
 
 
 prices = [19.99, 29.99, 9.99]
-total = calculate_total(prices)
+total = compute_total(prices)
 print(f"Total: ${total:.2f}")
 
 
@@ -49,10 +49,10 @@ print(f"Total: ${total:.2f}")
 # HOW TO TEST:
 # 1. Add "age: int" after line 54 (after "email: str")
 # 2. Exit insert mode
-# 3. Stride should suggest INSERTING "age=25" after "email=email" on line 63
+# 3. Stride should suggest INSERTING "age=25" after "email=email, age=25, age=age" on line 63
 # 4. Press Tab to accept - text is inserted, not replaced
 #
-# EXPECTED: Anchor="email=email", Position="after", Insert=", age=25"
+# EXPECTED: Anchor="email=email, age=25, age=age", Position="after", Insert=", age=25"
 # -----------------------------------------------------------------------------
 
 
@@ -60,15 +60,16 @@ print(f"Total: ${total:.2f}")
 class Person:
     name: str
     email: str
+    age: int
     # <- ADD "age: int" HERE
 
 
-def create_person(name: str, email: str) -> Person:
-    return Person(name=name, email=email)
+def create_person(name: str, email: str, age: int) -> Person:
+    return Person(name=name, email=email, age=age)
 
 
-alice = create_person("Alice", "alice@example.com")
-bob = create_person("Bob", "bob@example.com")
+alice = create_person("Alice", "alice@example.com", 25)
+bob = create_person("Bob", "bob@example.com", 10)
 
 
 # -----------------------------------------------------------------------------

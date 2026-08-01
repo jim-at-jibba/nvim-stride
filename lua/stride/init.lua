@@ -393,7 +393,12 @@ function M.setup(opts)
       "  buftype: '" .. bt .. "' (disabled: " .. tostring(bt_disabled) .. ")",
       "  overall disabled: " .. tostring(is_disabled),
       "  mode: " .. (Config.options.mode or "completion"),
+      "  tracked changes: " .. History.get_change_count(),
+      "  edit queue: " .. (M._edit_queue and string.format("%d/%d", M._edit_queue.index, #M._edit_queue.edits) or "empty"),
     }
+    for _, line in ipairs(require("stride.transport").status_lines()) do
+      table.insert(lines, line)
+    end
     vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
   end, { desc = "Show Stride status for current buffer" })
 

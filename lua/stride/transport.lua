@@ -32,9 +32,6 @@ M._backoff_until = 0
 ---@type number ms timestamp of last dispatched request
 M._last_dispatch = 0
 
----@type boolean Whether we've notified the user for the current backoff window
-M._backoff_notified = false
-
 local MAX_RETRIES = 3
 
 ---Get (or create) channel state
@@ -113,10 +110,12 @@ local function _enter_backoff(headers)
     cooldown_ms = Config.options.rate_limit_cooldown_ms or 15000
   end
 
-  M._backoff_until = vim.loop.now() + cooldown_ms
+  local now = vim.loop.now()
+  local is_new_window = now >= M._backoff_until
+  M._backoff_until = now + cooldown_ms
 
-  if not M._backoff_notified then
-    M._backoff_notified = true
+  -- Notify once per backoff window (not per 429, not only once per session)
+  if is_new_window then
     vim.notify(
       string.format("stride.nvim: rate limited, pausing requests for %ds", math.ceil(cooldown_ms / 1000)),
       vim.log.levels.WARN,
@@ -241,9 +240,6 @@ local function _dispatch(req, ch, request_id, attempt)
         return
       end
 
-      -- Success: clear backoff-notified flag for the next window
-      M._backoff_notified = false
-
       local ok, decoded = pcall(vim.fn.json_decode, out.body)
       if not ok or type(decoded) ~= "table" then
         Log.debug("transport: JSON parse error: %s", tostring(decoded))
@@ -323,13 +319,37 @@ function M.cancel_all()
   end
 end
 
+---Human-readable transport state (for :StrideStatus)
+---@return string[]
+function M.status_lines()
+  local now = vim.loop.now()
+  local lines = {}
+
+  if M._backoff_until > now then
+    table.insert(lines, string.format("  rate-limit backoff: %ds remaining", math.ceil((M._backoff_until - now) / 1000)))
+  else
+    table.insert(lines, "  rate-limit backoff: none")
+  end
+
+  for name, ch in pairs(M._channels) do
+    local state = "idle"
+    if ch.job then
+      state = "request in flight"
+    elseif ch.timer then
+      state = "throttled (pending dispatch)"
+    end
+    table.insert(lines, string.format("  channel '%s': %s", name, state))
+  end
+
+  return lines
+end
+
 ---Reset state (for testing)
 function M._reset()
   M.cancel_all()
   M._channels = {}
   M._backoff_until = 0
   M._last_dispatch = 0
-  M._backoff_notified = false
 end
 
 return M
