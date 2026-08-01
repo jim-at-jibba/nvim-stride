@@ -36,8 +36,10 @@ end
 ---@param buf number Buffer handle
 ---@param find_text string Text to find
 ---@param skip_comments_strings? boolean Whether to skip occurrences in comments/strings (default: true)
+---@param min_line? number 1-indexed inclusive lower bound for the search
+---@param max_line? number 1-indexed inclusive upper bound for the search
 ---@return {line: number, col_start: number, col_end: number, line_text: string}[]
-local function _find_all_occurrences(buf, find_text, skip_comments_strings)
+local function _find_all_occurrences(buf, find_text, skip_comments_strings, min_line, max_line)
   if skip_comments_strings == nil then
     skip_comments_strings = true
   end
@@ -46,8 +48,9 @@ local function _find_all_occurrences(buf, find_text, skip_comments_strings)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
   for line_num, line in ipairs(lines) do
+    local in_range = (not min_line or line_num >= min_line) and (not max_line or line_num <= max_line)
     local start_pos = 1
-    while true do
+    while in_range do
       local col_start, col_end = line:find(find_text, start_pos, true)
       if not col_start then
         break
@@ -72,6 +75,32 @@ local function _find_all_occurrences(buf, find_text, skip_comments_strings)
   end
 
   return occurrences
+end
+
+---Find occurrences anchored to a model-reported line number.
+---Tries the exact line first, then a small fuzzy radius, then the whole
+---buffer as a last resort (model line numbers can drift).
+---@param buf number Buffer handle
+---@param find_text string Text to find
+---@param target_line number|nil 1-indexed line reported by the model
+---@param skip_comments_strings? boolean
+---@return {line: number, col_start: number, col_end: number, line_text: string}[]
+local function _find_anchored_occurrences(buf, find_text, target_line, skip_comments_strings)
+  if target_line then
+    -- Exact line
+    local occ = _find_all_occurrences(buf, find_text, skip_comments_strings, target_line, target_line)
+    if #occ > 0 then
+      return occ
+    end
+    -- Fuzzy radius: ±2 lines
+    occ = _find_all_occurrences(buf, find_text, skip_comments_strings, target_line - 2, target_line + 2)
+    if #occ > 0 then
+      Log.debug("predictor: anchored match found within ±2 of line %d", target_line)
+      return occ
+    end
+    Log.debug("predictor: no anchored match near line %d, falling back to buffer-wide search", target_line)
+  end
+  return _find_all_occurrences(buf, find_text, skip_comments_strings)
 end
 
 ---Check if insert text already exists adjacent to anchor
@@ -185,6 +214,9 @@ local function _validate_response(response, buf, cursor_pos)
     return nil
   end
 
+  -- Line anchor reported by the model (numbered context lines)
+  local anchor_line = tonumber(response.line)
+
   if action == "replace" then
     -- REPLACE action: find text and replace it
     if not response.find or response.find == vim.NIL then
@@ -200,8 +232,8 @@ local function _validate_response(response, buf, cursor_pos)
     local find_text = response.find:gsub("│", "")
     local replace_text = response.replace:gsub("│", "")
 
-    -- Find all occurrences
-    local occurrences = _find_all_occurrences(buf, find_text)
+    -- Find occurrences, preferring the model-reported line
+    local occurrences = _find_anchored_occurrences(buf, find_text, anchor_line)
 
     if #occurrences == 0 then
       Log.debug("predictor: find text '%s' not found in buffer", find_text)
@@ -210,6 +242,13 @@ local function _validate_response(response, buf, cursor_pos)
 
     -- Select best match near cursor
     local best = _select_best_match(occurrences, cursor_pos)
+
+    -- Anchored occurrences may all be on the cursor line; widen to the
+    -- whole buffer before giving up
+    if not best and anchor_line then
+      occurrences = _find_all_occurrences(buf, find_text)
+      best = _select_best_match(occurrences, cursor_pos)
+    end
     if not best then
       return nil
     end
@@ -245,8 +284,9 @@ local function _validate_response(response, buf, cursor_pos)
     local anchor_text = response.anchor:gsub("│", "")
     local insert_text = response.insert:gsub("│", "")
 
-    -- Find all occurrences of anchor (don't skip comments - anchors can be comments like "// TODO")
-    local occurrences = _find_all_occurrences(buf, anchor_text, false)
+    -- Find occurrences of anchor, preferring the model-reported line
+    -- (don't skip comments - anchors can be comments like "// TODO")
+    local occurrences = _find_anchored_occurrences(buf, anchor_text, anchor_line, false)
 
     if #occurrences == 0 then
       Log.debug("predictor: anchor text '%s' not found in buffer", anchor_text)
@@ -321,11 +361,12 @@ Context is provided in XML tags for clarity:
 Rules:
 - Return ONLY valid JSON, no markdown
 - Two action types supported:
-  1. Replace: {"action": "replace", "find": "text_to_find", "replace": "replacement_text"}
-  2. Insert: {"action": "insert", "anchor": "text_to_find", "position": "after"|"before", "insert": "text_to_insert"}
+  1. Replace: {"action": "replace", "line": <number>, "find": "text_to_find", "replace": "replacement_text"}
+  2. Insert: {"action": "insert", "line": <number>, "anchor": "text_to_find", "position": "after"|"before", "insert": "text_to_insert"}
+- "line" is REQUIRED: the line number from <Context> where the edit applies
 - Remove │ from all text fields
 - The "find" or "anchor" text MUST be a complete identifier, word, or expression - never a partial match
-- The "find" or "anchor" text must exist EXACTLY in the current context (not on the cursor line)
+- The "find" or "anchor" text must exist EXACTLY on that line in the current context (not on the cursor line)
 - If no prediction is possible: {"action": null}
 - Predict the NEXT edit the user will make, not the edit they just made
 
@@ -346,7 +387,7 @@ Variable rename (replace):
 <Context>10: local config│ = {
 20: print(configTest1)</Context>
 Analysis: User changed "configTest1" to "config" on line 10. Line 20 still has old value.
-Prediction: {"action": "replace", "find": "configTest1", "replace": "config"}
+Prediction: {"action": "replace", "line": 20, "find": "configTest1", "replace": "config"}
 
 Add property (insert):
 <RecentChanges>Added "age: int"</RecentChanges>
@@ -355,8 +396,8 @@ Add property (insert):
     name: str
     age: int│</ContainingFunction>
 <Context>65: User(id=1, name=name, email=email)</Context>
-Analysis: User added "age" field. Constructor call needs the argument.
-Prediction: {"action": "insert", "anchor": "email=email", "position": "after", "insert": ", age=0"}
+Analysis: User added "age" field. Constructor call on line 65 needs the argument.
+Prediction: {"action": "insert", "line": 65, "anchor": "email=email", "position": "after", "insert": ", age=0"}
 
 No prediction needed:
 <RecentChanges>edits on line 10</RecentChanges>
@@ -508,5 +549,8 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
     end,
   })
 end
+
+---Expose internals for testing
+M._validate_response = _validate_response
 
 return M
