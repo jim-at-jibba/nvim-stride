@@ -3,6 +3,9 @@ local M = {}
 ---@type boolean Global enabled state
 M.enabled = true
 
+---@type boolean True while programmatically applying an accepted edit
+M._accepting = false
+
 local Config = require("stride.config")
 local Utils = require("stride.utils")
 local Client = require("stride.client")
@@ -76,6 +79,50 @@ local function _is_undo_redo()
   return tree.seq_cur ~= tree.seq_last
 end
 
+---@class Stride.EditQueue
+---@field edits table[] Raw edit objects from the LLM (ordered)
+---@field index number 1-based index of the current edit
+---@field buf number Buffer the edits belong to
+
+---@type Stride.EditQueue|nil Pending multi-edit queue
+M._edit_queue = nil
+
+---Clear the pending edit queue
+local function _clear_edit_queue()
+  M._edit_queue = nil
+end
+
+---Show the next resolvable edit from the queue.
+---Edits are resolved lazily against the current buffer state, so earlier
+---accepted edits shifting lines don't invalidate later ones.
+---@param buf number Buffer handle
+---@return boolean true if an edit was rendered
+local function _show_next_edit(buf)
+  local queue = M._edit_queue
+  if not queue or queue.buf ~= buf then
+    return false
+  end
+
+  local cursor_pos = _get_cursor_pos()
+  local total = #queue.edits
+
+  while queue.index <= total do
+    local suggestion = Predictor.resolve_edit(queue.edits[queue.index], buf, cursor_pos)
+    if suggestion then
+      if Config.options.show_remote then
+        Ui.render_remote(suggestion, buf, queue.index, total)
+      end
+      return true
+    end
+    Log.debug("edit queue: edit %d/%d failed to resolve, skipping", queue.index, total)
+    queue.index = queue.index + 1
+  end
+
+  Log.debug("edit queue: exhausted")
+  _clear_edit_queue()
+  return false
+end
+
 ---Trigger V2 refactor prediction based on recent edits
 ---@param buf number Buffer handle
 ---@param cursor_pos Stride.CursorPos
@@ -92,15 +139,15 @@ local function _trigger_refactor_prediction(buf, cursor_pos)
 
   Log.debug("refactor: %d changes tracked, fetching next-edit prediction", change_count)
 
-  Predictor.fetch_next_edit(buf, cursor_pos, function(suggestion)
-    if not suggestion then
-      Log.debug("refactor: no suggestion returned")
+  Predictor.fetch_next_edit(buf, cursor_pos, function(edits)
+    if not edits then
+      Log.debug("refactor: no edits returned")
+      _clear_edit_queue()
       return
     end
 
-    if Config.options.show_remote then
-      Ui.render_remote(suggestion, buf, 1, 1)
-    end
+    M._edit_queue = { edits = edits, index = 1, buf = buf }
+    _show_next_edit(buf)
   end)
 end
 
@@ -216,6 +263,7 @@ function M.setup(opts)
       Ui.clear()
       Client.cancel()
       Predictor.cancel()
+      _clear_edit_queue()
 
       if _is_disabled() then
         return
@@ -237,6 +285,11 @@ function M.setup(opts)
   vim.api.nvim_create_autocmd("TextChanged", {
     group = augroup,
     callback = function()
+      -- Skip our own programmatic edits (accepting a suggestion)
+      if M._accepting then
+        return
+      end
+
       if _is_disabled() then
         return
       end
@@ -253,6 +306,7 @@ function M.setup(opts)
       -- Clear stale prediction immediately
       Ui.clear()
       Predictor.cancel()
+      _clear_edit_queue()
 
       local buf = vim.api.nvim_get_current_buf()
       local cursor_pos = _get_cursor_pos()
@@ -287,6 +341,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("StrideClear", function()
     History.clear()
     Ui.clear()
+    _clear_edit_queue()
     Predictor.cancel()
     Client.cancel()
     Log.debug(":StrideClear executed")
@@ -304,6 +359,7 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("StrideDisable", function()
     M.enabled = false
     Ui.clear()
+    _clear_edit_queue()
     Predictor.cancel()
     Client.cancel()
     Log.debug(":StrideDisable executed")
@@ -362,6 +418,10 @@ function M.accept()
     Ui.clear()
 
     vim.schedule(function()
+      -- Suppress the TextChanged handler for our own programmatic edit
+      -- (it would otherwise clear the edit queue and re-trigger prediction)
+      M._accepting = true
+
       if action == "insert" then
         -- INSERT action: insert text at the insertion point
         local insert_text = s.insert or s.new
@@ -396,11 +456,18 @@ function M.accept()
         Log.debug("accept: applied replacement at line %d", target_line)
       end
 
-      -- Auto-trigger next prediction after accepting (chain edits)
+      -- Advance the edit queue; only fetch a fresh prediction when the
+      -- queue is exhausted (avoids one LLM round-trip per accepted edit)
       if _mode_has_refactor() then
-        local cursor_pos = _get_cursor_pos()
         vim.defer_fn(function()
-          _trigger_refactor_prediction(buf, cursor_pos)
+          M._accepting = false
+          if M._edit_queue then
+            M._edit_queue.index = M._edit_queue.index + 1
+          end
+          if not _show_next_edit(buf) then
+            local cursor_pos = _get_cursor_pos()
+            _trigger_refactor_prediction(buf, cursor_pos)
+          end
         end, 50) -- Small delay to let buffer update
       end
     end)

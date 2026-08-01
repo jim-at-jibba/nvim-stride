@@ -349,7 +349,7 @@ local function _validate_response(response, buf, cursor_pos)
 end
 
 ---System prompt for general next-edit prediction
-local SYSTEM_PROMPT = [[Predict the user's next edit based on their recent changes and cursor position.
+local SYSTEM_PROMPT = [[Predict the user's next edits based on their recent changes and cursor position.
 
 Context is provided in XML tags for clarity:
 - <RecentChanges> shows the user's recent edits in diff format
@@ -359,16 +359,18 @@ Context is provided in XML tags for clarity:
 - <Cursor> shows exact cursor position
 
 Rules:
-- Return ONLY valid JSON, no markdown
-- Two action types supported:
+- Return ONLY valid JSON, no markdown: {"edits": [ ... ]}
+- "edits" is an ordered array of ALL related edits the user will make next (may be empty)
+- Two edit types supported:
   1. Replace: {"action": "replace", "line": <number>, "find": "text_to_find", "replace": "replacement_text"}
   2. Insert: {"action": "insert", "line": <number>, "anchor": "text_to_find", "position": "after"|"before", "insert": "text_to_insert"}
 - "line" is REQUIRED: the line number from <Context> where the edit applies
 - Remove │ from all text fields
 - The "find" or "anchor" text MUST be a complete identifier, word, or expression - never a partial match
 - The "find" or "anchor" text must exist EXACTLY on that line in the current context (not on the cursor line)
-- If no prediction is possible: {"action": null}
-- Predict the NEXT edit the user will make, not the edit they just made
+- If no prediction is possible: {"edits": []}
+- Predict the NEXT edits the user will make, not the edit they just made
+- Order edits top-to-bottom by line number
 
 IMPORTANT - When to use each action:
 - Use "replace" when existing text needs to change (e.g., rename variable)
@@ -382,12 +384,16 @@ IMPORTANT - Infer the original value:
 
 Examples:
 
-Variable rename (replace):
+Variable rename with two remaining occurrences (replace):
 <RecentChanges>test.lua:10 typing</RecentChanges>
 <Context>10: local config│ = {
-20: print(configTest1)</Context>
-Analysis: User changed "configTest1" to "config" on line 10. Line 20 still has old value.
-Prediction: {"action": "replace", "line": 20, "find": "configTest1", "replace": "config"}
+20: print(configTest1)
+31: return configTest1</Context>
+Analysis: User changed "configTest1" to "config" on line 10. Lines 20 and 31 still have old value.
+Prediction: {"edits": [
+  {"action": "replace", "line": 20, "find": "configTest1", "replace": "config"},
+  {"action": "replace", "line": 31, "find": "configTest1", "replace": "config"}
+]}
 
 Add property (insert):
 <RecentChanges>Added "age: int"</RecentChanges>
@@ -397,12 +403,12 @@ Add property (insert):
     age: int│</ContainingFunction>
 <Context>65: User(id=1, name=name, email=email)</Context>
 Analysis: User added "age" field. Constructor call on line 65 needs the argument.
-Prediction: {"action": "insert", "line": 65, "anchor": "email=email", "position": "after", "insert": ", age=0"}
+Prediction: {"edits": [{"action": "insert", "line": 65, "anchor": "email=email", "position": "after", "insert": ", age=0"}]}
 
 No prediction needed:
 <RecentChanges>edits on line 10</RecentChanges>
 <Context>All occurrences already updated</Context>
-Prediction: {"action": null}
+Prediction: {"edits": []}
 ]]
 
 ---Build structured prompt using XML tags
@@ -462,7 +468,7 @@ end
 ---Fetch next-edit prediction from LLM
 ---@param buf number Buffer handle
 ---@param cursor_pos Stride.CursorPos
----@param callback fun(suggestion: Stride.RemoteSuggestion|nil)
+---@param callback fun(edits: table[]|nil) Receives the ordered list of raw edit objects
 function M.fetch_next_edit(buf, cursor_pos, callback)
   M.cancel()
 
@@ -530,24 +536,45 @@ function M.fetch_next_edit(buf, cursor_pos, callback)
         return
       end
 
-      -- Validate and create suggestion
-      local suggestion = _validate_response(json_response, buf, cursor_pos)
-      if suggestion then
-        Log.debug(
-          "predictor: valid suggestion for line %d: '%s' → '%s'",
-          suggestion.line,
-          suggestion.original,
-          suggestion.new
-        )
+      -- Normalize into an ordered edit list.
+      -- New format: {"edits": [...]}; legacy: a single edit object.
+      local edits
+      if type(json_response) == "table" and type(json_response.edits) == "table" then
+        edits = json_response.edits
+      elseif type(json_response) == "table" and json_response.action and json_response.action ~= vim.NIL then
+        edits = { json_response }
+      else
+        edits = {}
       end
 
-      callback(suggestion)
+      if #edits == 0 then
+        Log.debug("predictor: no edits predicted")
+        callback(nil)
+        return
+      end
+
+      Log.debug("predictor: %d edits predicted", #edits)
+      callback(edits)
     end,
     on_error = function(kind, status)
       Log.debug("predictor: request failed kind=%s status=%s", kind, tostring(status))
       callback(nil)
     end,
   })
+end
+
+---Resolve a raw edit object against the current buffer state.
+---Called lazily as each edit becomes the head of the queue, so positions
+---survive earlier accepted edits shifting the buffer.
+---@param edit table Raw edit object from the LLM
+---@param buf number Buffer handle
+---@param cursor_pos Stride.CursorPos
+---@return Stride.RemoteSuggestion|nil
+function M.resolve_edit(edit, buf, cursor_pos)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+  return _validate_response(edit, buf, cursor_pos)
 end
 
 ---Expose internals for testing
