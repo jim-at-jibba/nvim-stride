@@ -349,66 +349,38 @@ local function _validate_response(response, buf, cursor_pos)
 end
 
 ---System prompt for general next-edit prediction
-local SYSTEM_PROMPT = [[Predict the user's next edits based on their recent changes and cursor position.
+local SYSTEM_PROMPT = [[Predict the user's next edits from their recent changes and cursor position.
 
-Context is provided in XML tags for clarity:
-- <RecentChanges> shows the user's recent edits in diff format
-- <ContainingFunction> shows the function being edited (when detected)
-- <Context> shows numbered lines around cursor with │ marking position
-- <ProjectRules> contains project-specific guidelines (when available)
-- <Cursor> shows exact cursor position
+Input tags: <RecentChanges> (diffs: "- old" / "+ new"), <ContainingFunction>, <Context> (numbered lines, │ marks cursor), <ProjectRules>, <Cursor>.
+
+Respond with ONLY JSON, no markdown: {"edits": [...]}
+- Ordered top-to-bottom by line; [] if nothing to predict
+- Edit types:
+  {"action": "replace", "line": N, "find": "old_text", "replace": "new_text"}
+  {"action": "insert", "line": N, "anchor": "text", "position": "after"|"before", "insert": "text"}
 
 Rules:
-- Return ONLY valid JSON, no markdown: {"edits": [ ... ]}
-- "edits" is an ordered array of ALL related edits the user will make next (may be empty)
-- Two edit types supported:
-  1. Replace: {"action": "replace", "line": <number>, "find": "text_to_find", "replace": "replacement_text"}
-  2. Insert: {"action": "insert", "line": <number>, "anchor": "text_to_find", "position": "after"|"before", "insert": "text_to_insert"}
-- "line" is REQUIRED: the line number from <Context> where the edit applies
-- Remove │ from all text fields
-- The "find" or "anchor" text MUST be a complete identifier, word, or expression - never a partial match
-- The "find" or "anchor" text must exist EXACTLY on that line in the current context (not on the cursor line)
-- If no prediction is possible: {"edits": []}
-- Predict the NEXT edits the user will make, not the edit they just made
-- Order edits top-to-bottom by line number
+- "line" is the line number from <Context> where the edit applies
+- "find"/"anchor" must be a complete identifier or expression existing EXACTLY on that line; never the cursor line; strip │
+- Predict the NEXT edits, not the edit just made. Recent changes may be partial keystrokes: infer the old and new values, then update remaining occurrences of the old value.
+- "replace" changes existing text; "insert" adds new text (new parameter, property, argument)
 
-IMPORTANT - When to use each action:
-- Use "replace" when existing text needs to change (e.g., rename variable)
-- Use "insert" when NEW text needs to be added (e.g., new parameter, new property)
-
-IMPORTANT - Infer the original value:
-- Recent changes may show incremental keystrokes, not the full edit
-- Look at the cursor line to see the NEW value after editing
-- Find OTHER occurrences in the context that still have the OLD value
-- The "find" should match those old occurrences exactly
-
-Examples:
-
-Variable rename with two remaining occurrences (replace):
-<RecentChanges>test.lua:10 typing</RecentChanges>
+Example - rename:
+<RecentChanges>test.lua:10:10
+- configTest1
++ config</RecentChanges>
 <Context>10: local config│ = {
 20: print(configTest1)
 31: return configTest1</Context>
-Analysis: User changed "configTest1" to "config" on line 10. Lines 20 and 31 still have old value.
-Prediction: {"edits": [
+{"edits": [
   {"action": "replace", "line": 20, "find": "configTest1", "replace": "config"},
-  {"action": "replace", "line": 31, "find": "configTest1", "replace": "config"}
-]}
+  {"action": "replace", "line": 31, "find": "configTest1", "replace": "config"}]}
 
-Add property (insert):
-<RecentChanges>Added "age: int"</RecentChanges>
-<ContainingFunction name="User">class User:
-    id: int
-    name: str
-    age: int│</ContainingFunction>
+Example - new field:
+<RecentChanges>user.py:12:12
++ age: int</RecentChanges>
 <Context>65: User(id=1, name=name, email=email)</Context>
-Analysis: User added "age" field. Constructor call on line 65 needs the argument.
-Prediction: {"edits": [{"action": "insert", "line": 65, "anchor": "email=email", "position": "after", "insert": ", age=0"}]}
-
-No prediction needed:
-<RecentChanges>edits on line 10</RecentChanges>
-<Context>All occurrences already updated</Context>
-Prediction: {"edits": []}
+{"edits": [{"action": "insert", "line": 65, "anchor": "email=email", "position": "after", "insert": ", age=0"}]}
 ]]
 
 ---Build structured prompt using XML tags
@@ -424,18 +396,7 @@ local function _build_structured_prompt(ctx, changes_text)
   table.insert(parts, "</RecentChanges>")
   table.insert(parts, "")
 
-  -- Containing function (if detected)
-  if ctx.containing_function then
-    local fn = ctx.containing_function
-    local name_attr = fn.name and string.format(' name="%s"', fn.name) or ""
-    local lines_attr = string.format(' lines="%d-%d"', fn.range.start.row, fn.range.end_.row)
-    table.insert(parts, string.format("<ContainingFunction%s%s>", name_attr, lines_attr))
-    table.insert(parts, fn.text)
-    table.insert(parts, "</ContainingFunction>")
-    table.insert(parts, "")
-  end
-
-  -- Buffer context
+  -- Buffer context window
   local total_lines = vim.api.nvim_buf_line_count(ctx.buf)
   local context_lines = Config.options.context_lines or 30
   local small_threshold = Config.options.small_file_threshold or 200
@@ -451,6 +412,24 @@ local function _build_structured_prompt(ctx, changes_text)
     end_line = math.min(total_lines, ctx.cursor.row + after)
   end
 
+  -- Containing function: only include when it extends beyond the context
+  -- window; otherwise its text is already in <Context> and sending it
+  -- twice just burns tokens
+  if ctx.containing_function then
+    local fn = ctx.containing_function
+    local fully_in_window = fn.range.start.row >= start_line and fn.range.end_.row <= end_line
+    if not fully_in_window then
+      local name_attr = fn.name and string.format(' name="%s"', fn.name) or ""
+      local lines_attr = string.format(' lines="%d-%d"', fn.range.start.row, fn.range.end_.row)
+      table.insert(parts, string.format("<ContainingFunction%s%s>", name_attr, lines_attr))
+      table.insert(parts, fn.text)
+      table.insert(parts, "</ContainingFunction>")
+      table.insert(parts, "")
+    else
+      Log.debug("predictor: containing function within context window, skipping duplicate")
+    end
+  end
+
   local buffer_context = ctx:build_prompt_context(start_line, end_line)
   table.insert(parts, string.format('<Context file="%s" lines="%d-%d">', ctx.file_path, start_line, end_line))
   table.insert(parts, buffer_context)
@@ -460,7 +439,7 @@ local function _build_structured_prompt(ctx, changes_text)
   -- Cursor position
   table.insert(parts, string.format('<Cursor line="%d" col="%d" />', ctx.cursor.row, ctx.cursor.col))
   table.insert(parts, "")
-  table.insert(parts, "Predict the most likely next edit the user will make.")
+  table.insert(parts, "Predict the most likely next edits the user will make.")
 
   return table.concat(parts, "\n")
 end

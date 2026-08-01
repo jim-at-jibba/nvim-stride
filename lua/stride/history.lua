@@ -287,7 +287,49 @@ function M.get_changes_for_prompt(token_budget, file_filter)
   return table.concat(selected, "\n")
 end
 
----Format a single change as unified diff
+---Compute the changed span between two strings, expanded to word boundaries.
+---Returns the differing fragments, e.g. "print(configTest1)" vs
+---"print(config)" -> "configTest1", "config". Falls back to full strings
+---when there's no common affix to trim.
+---@param old string
+---@param new string
+---@return string old_fragment, string new_fragment
+function M._word_diff(old, new)
+  if old == new then
+    return "", ""
+  end
+
+  -- Trim common prefix
+  local p = 1
+  local max_p = math.min(#old, #new)
+  while p <= max_p and old:byte(p) == new:byte(p) do
+    p = p + 1
+  end
+
+  -- Trim common suffix (not crossing the prefix)
+  local s_old, s_new = #old, #new
+  while s_old >= p and s_new >= p and old:byte(s_old) == new:byte(s_new) do
+    s_old = s_old - 1
+    s_new = s_new - 1
+  end
+
+  -- Expand left to a word boundary (prefix is shared, so both move together)
+  while p > 1 and old:sub(p - 1, p - 1):match("[%w_]") do
+    p = p - 1
+  end
+
+  -- Expand right to a word boundary (suffix is shared, so both move together)
+  while s_old < #old and old:sub(s_old + 1, s_old + 1):match("[%w_]") do
+    s_old = s_old + 1
+    s_new = s_new + 1
+  end
+
+  return old:sub(p, s_old), new:sub(p, s_new)
+end
+
+---Format a single change as a compact diff.
+---Single-line changes emit only the changed fragments (word-level diff)
+---to keep prompt tokens down; multi-line changes emit full lines.
 ---@param change Stride.TrackedChange
 ---@return string
 function M._format_change_as_diff(change)
@@ -295,16 +337,30 @@ function M._format_change_as_diff(change)
 
   table.insert(lines, string.format("%s:%d:%d", change.file, change.range.start_line, change.range.end_line))
 
-  -- Format old text lines with -
-  if change.old_text and change.old_text ~= "" then
-    for _, line in ipairs(vim.split(change.old_text, "\n")) do
+  local old_text = change.old_text or ""
+  local new_text = change.new_text or ""
+  local is_single_line = not old_text:find("\n", 1, true) and not new_text:find("\n", 1, true)
+
+  if is_single_line and old_text ~= "" and new_text ~= "" then
+    local old_frag, new_frag = M._word_diff(old_text, new_text)
+    if old_frag ~= "" then
+      table.insert(lines, "- " .. old_frag)
+    end
+    if new_frag ~= "" then
+      table.insert(lines, "+ " .. new_frag)
+    end
+    return table.concat(lines, "\n")
+  end
+
+  -- Multi-line (or pure insert/delete): full lines
+  if old_text ~= "" then
+    for _, line in ipairs(vim.split(old_text, "\n")) do
       table.insert(lines, "- " .. line)
     end
   end
 
-  -- Format new text lines with +
-  if change.new_text and change.new_text ~= "" then
-    for _, line in ipairs(vim.split(change.new_text, "\n")) do
+  if new_text ~= "" then
+    for _, line in ipairs(vim.split(new_text, "\n")) do
       table.insert(lines, "+ " .. line)
     end
   end
