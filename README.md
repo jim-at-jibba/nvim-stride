@@ -21,6 +21,7 @@ Powered by the Cerebras API for ultra-low latency inference.
 
 ### Refactor Mode (Next-Edit Suggestions)
 - **Next-edit prediction**: Rename `apple` to `orange` on line 1, and stride suggests updating line 20
+- **Multi-edit predictions**: A rename touching several call sites is predicted in a single request — Tab steps through the edits with a `[n/m]` counter
 - **Automatic trigger**: Predictions fire on `InsertLeave` and normal mode edits (`x`, `dd`, etc.)
 - **Remote suggestions**: Highlights target text (strikethrough) with replacement shown inline
 - **Insert detection**: Adds new parameters, properties, or arguments where needed
@@ -30,6 +31,8 @@ Powered by the Cerebras API for ultra-low latency inference.
 
 ### Completion Mode
 - Real-time ghost text completions as you type
+- **Suggestion retention**: keep typing — characters matching the ghost text are consumed without a new request
+- **Partial accepts**: accept the next word (`<M-w>`) or first line (`<M-l>`) of a suggestion
 - **Focused completions**: Completes the current statement/expression, not entire blocks — intentionally minimal to stay fast and non-intrusive
 - Treesitter-aware context capture for smarter completions
 - Comment-intent completion: type `// log the id` and get `console.log(id)`
@@ -38,6 +41,8 @@ Powered by the Cerebras API for ultra-low latency inference.
 
 ### Core
 - Automatic race condition handling
+- **Rate-limit aware**: honors `Retry-After` on 429s, throttles request frequency, and kills in-flight requests on cancel so no tokens are wasted
+- Deterministic completion caching
 - Configurable debounce and filetypes
 - **Gutter icon**: Shows indicator in sign column when suggestion is active
 - **`:StrideEnable` / `:StrideDisable`**: Toggle predictions globally
@@ -112,11 +117,18 @@ require("stride").setup({
   model = "gpt-oss-120b",
 
   -- UX Settings
-  debounce_ms = 300,           -- Debounce for insert mode (ms)
+  debounce_ms = 500,           -- Debounce for insert mode (ms)
   debounce_normal_ms = 500,    -- Debounce for normal mode edits (ms)
   accept_keymap = "<Tab>",     -- Key to accept suggestion
+  accept_word_keymap = "<M-w>", -- Key to accept next word (false to disable)
+  accept_line_keymap = "<M-l>", -- Key to accept first line (false to disable)
   dismiss_keymap = "<Esc>",    -- Key to dismiss suggestion (normal mode)
   context_lines = 30,          -- Lines of context before/after cursor
+
+  -- Rate Limiting
+  min_request_interval_ms = 500,  -- Min interval between any two API requests
+  rate_limit_cooldown_ms = 15000, -- Pause after a 429 without Retry-After header
+  max_context_chars = 9000,       -- Char budget for completion prompt context
 
   -- Feature Flags
   use_treesitter = true,       -- Use Treesitter for smart context expansion
@@ -185,7 +197,7 @@ require("stride").setup()
 https://github.com/user-attachments/assets/25915755-c94c-458b-8157-bd500bdef8fc
 
 1. Start typing in insert mode
-2. After a brief pause (300ms default), a ghost text suggestion appears
+2. After a brief pause (500ms default), a ghost text suggestion appears
 3. Press `<Tab>` to accept the suggestion
 4. Press any other key to dismiss and continue typing
 
@@ -274,7 +286,7 @@ require("stride").setup({
 ## How It Works
 
 ### Completion Mode
-1. **Debounced Trigger**: After you stop typing for 300ms, a prediction is requested
+1. **Debounced Trigger**: After you stop typing for 500ms, a prediction is requested
 2. **Smart Context**: Uses Treesitter to capture full function/class definitions in context
 3. **Focused Output**: Completions target the current statement/expression only — not scaffolding or large code blocks. This is by design for low latency and high acceptance rates.
 4. **Ghost Text**: Suggestions appear as dimmed text after your cursor
@@ -294,13 +306,14 @@ require("stride").setup({
 ```
 lua/
 └── stride/
-    ├── init.lua      # Public API, setup(), autocmds
+    ├── init.lua      # Public API, setup(), autocmds, edit queue
     ├── config.lua    # User defaults, options merging
     ├── utils.lua     # Context extraction, Treesitter expansion
-    ├── client.lua    # Cerebras API integration (completion)
-    ├── ui.lua        # Ghost text rendering (local + remote)
-    ├── history.lua   # Buffer snapshots, diff computation
-    ├── predictor.lua # Next-edit prediction
+    ├── transport.lua # HTTP layer: cancellation, throttling, 429 backoff
+    ├── client.lua    # Completion prompts + caching
+    ├── ui.lua        # Ghost text rendering (local + remote), retention
+    ├── history.lua   # Incremental change tracking, word-level diffs
+    ├── predictor.lua # Next-edit prediction (multi-edit)
     ├── notify.lua    # Bottom-center notifications
     ├── context.lua   # Project context (AGENTS.md) discovery
     └── log.lua       # Debug logging
@@ -312,7 +325,7 @@ lua/
 - [ ] Treesitter integration (semantic context, scope-aware predictions)
 - [ ] Multi-file context awareness
 - [ ] Custom prompt templates
-- [ ] Prediction caching
+- [x] Prediction caching
 
 ## Development
 

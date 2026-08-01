@@ -54,6 +54,16 @@ function M.record_change(change)
   local now = vim.loop.hrtime()
   change.hrtime = now
 
+  -- Multi-line changes shift the line numbers of everything below them,
+  -- making per-line aggregation keys stale. Reset aggregation sessions.
+  local is_multiline = change.range.start_line ~= change.range.end_line
+    or (change.old_text or ""):find("\n", 1, true) ~= nil
+    or (change.new_text or ""):find("\n", 1, true) ~= nil
+  if is_multiline then
+    M._edit_snapshots = {}
+    M._last_edit_time = {}
+  end
+
   local key = change.file .. ":" .. change.range.start_line
 
   -- Check if this is a continuation of rapid editing on the same line

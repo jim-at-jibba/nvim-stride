@@ -87,6 +87,14 @@ describe("context", function()
       local output = ctx:build_prompt_context(1, 3)
       assert.is_not_nil(output:find("│"))
     end)
+
+    it("places the marker exactly before the cursor character", function()
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "abcdef" })
+      vim.api.nvim_win_set_cursor(0, { 1, 3 }) -- cursor on "d"
+      local ctx = Context.from_current_buffer()
+      local output = ctx:build_prompt_context(1, 1)
+      assert.equals("1: abc│def", output)
+    end)
   end)
 
   describe("agent_context", function()
