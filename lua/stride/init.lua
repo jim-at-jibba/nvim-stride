@@ -386,6 +386,22 @@ function M.setup(opts)
     local bt_disabled = _matches_disabled(bt, Config.options.disabled_buftypes)
     local is_disabled = _is_disabled()
 
+    local suggestion_line = "  active suggestion: none"
+    local s = Ui.current_suggestion
+    if s then
+      if s.is_remote then
+        suggestion_line = string.format(
+          "  active suggestion: remote %s at line %d ('%s' -> '%s')",
+          s.action or "replace",
+          s.target_line or -1,
+          s.original or "?",
+          s.new or "?"
+        )
+      else
+        suggestion_line = string.format("  active suggestion: ghost text at line %d (%d chars)", s.row + 1, #(s.text or ""))
+      end
+    end
+
     local lines = {
       "Stride Status:",
       "  enabled: " .. tostring(M.enabled),
@@ -395,6 +411,7 @@ function M.setup(opts)
       "  mode: " .. (Config.options.mode or "completion"),
       "  tracked changes: " .. History.get_change_count(),
       "  edit queue: " .. (M._edit_queue and string.format("%d/%d", M._edit_queue.index, #M._edit_queue.edits) or "empty"),
+      suggestion_line,
     }
     for _, line in ipairs(require("stride.transport").status_lines()) do
       table.insert(lines, line)
